@@ -6,6 +6,17 @@
     <title>DOC-PAT | Healthcare Services</title>
 </head>
 <body>
+
+
+      <iframe
+  width="600"
+  height="450"
+  style="border:0"
+  loading="lazy"
+  allowfullscreen
+  src="https://www.google.com/maps">
+</iframe>
+
     <header class="topbar">
       <div class="container nav">
         <div class="brand">
@@ -14,12 +25,24 @@
         </div>
 
         <nav class="nav-links" aria-label="Main menu">
-          <a href="#region">Region</a>
+          <!-- Map Trigger Link -->
+          <a href="#region-map-modal" id="map-trigger" class="nav-map-btn">
+            Region <span class="map-icon">📍</span>
+          </a>
+
           <a href="#doctors">Doctors</a>
           <a href="#hospitals">Hospitals</a>
           <a href="#schemes">Schemes</a>
-          <a href="#about">About</a>
+          <a href="#about">About</a> 
         </nav>
+        </nav>
+        <div id="region-map-container" class="map-hidden">
+          <div class="map-header">
+          <span id="map-breadcrumbs">Global View</span>
+          <button id="close-map">✕ Close Map</button>
+          </div>
+          <div id="map-canvas"></div>
+        </div>
 
         <button class="nav-button">Book Visit</button>
       </div>
