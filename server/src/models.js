@@ -43,12 +43,18 @@ export const EmergencyRequest = model('EmergencyRequest', new Schema({
 
 export const Appointment = model('Appointment', new Schema({
   patient: ref('User'), doctor: ref('Doctor'), hospital: ref('Hospital'), when: Date, reason: String,
-  status: { type: String, enum: ['PENDING', 'ACCEPTED', 'REJECTED', 'COMPLETED', 'CANCELLED'], default: 'PENDING' }, clientId: { type: String, unique: true, sparse: true } }, T));
+  status: { type: String, enum: ['PENDING', 'ACCEPTED', 'REJECTED', 'COMPLETED', 'CANCELLED'], default: 'PENDING' },
+  reminded: { type: Boolean, default: false }, clientId: { type: String, unique: true, sparse: true } }, T));
 
 export const Review = model('Review', new Schema({
   patient: ref('User'), appointment: { ...ref('Appointment'), unique: true }, doctor: ref('Doctor'), hospital: ref('Hospital'),
   scores: { communication: Number, waiting: Number, facilities: Number, transparency: Number, overall: Number },
-  text: String, flagged: { type: Boolean, default: false }, hidden: { type: Boolean, default: false } }, T));
+  text: String, reply: { text: String, at: Date }, flagged: { type: Boolean, default: false }, hidden: { type: Boolean, default: false } }, T));
+
+export const Message = model('Message', new Schema({
+  appointment: { ...ref('Appointment'), required: true }, from: { ...ref('User'), required: true },
+  to: { ...ref('User'), required: true }, text: { type: String, required: true, maxlength: 1000 },
+}, T));
 
 export const Complaint = model('Complaint', new Schema({
   complaintId: { type: String, unique: true }, patient: ref('User'),
@@ -61,3 +67,16 @@ export const Complaint = model('Complaint', new Schema({
 export const Audit = model('Audit', new Schema({ user: Schema.Types.ObjectId, action: String, target: String, meta: Object, ip: String }, T));
 export const Scheme = model('Scheme', new Schema({ title: String, body: String, region: String, publishedBy: Schema.Types.ObjectId }, T));
 export const Notification = model('Notification', new Schema({ user: ref('User'), title: String, body: String, read: { type: Boolean, default: false } }, T));
+
+const otp = new Schema({
+  key: { type: String, required: true }, purpose: { type: String, enum: ['login', 'reset'], required: true },
+  codeHash: { type: String, required: true }, expiresAt: { type: Date, required: true },
+  attempts: { type: Number, default: 0 },
+}, T);
+otp.index({ key: 1, purpose: 1 }, { unique: true });
+otp.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+export const Otp = model('Otp', otp);
+
+const saved = new Schema({ user: { ...ref('User'), required: true }, kind: { type: String, enum: ['hospital', 'doctor'], required: true }, target: { type: Schema.Types.ObjectId, required: true } }, T);
+saved.index({ user: 1, kind: 1, target: 1 }, { unique: true });
+export const Saved = model('Saved', saved);

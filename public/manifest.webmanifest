@@ -1,0 +1,13 @@
+{
+  "name": "HealthConnect Healthcare Access",
+  "short_name": "HealthConnect",
+  "description": "Find hospitals, doctors and emergency healthcare services.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f8f7",
+  "theme_color": "#0b716d",
+  "lang": "en",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
