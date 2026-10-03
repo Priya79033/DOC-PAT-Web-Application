@@ -43,11 +43,33 @@ const locate = () => new Promise((res) => navigator.geolocation ? navigator.geol
 
 function Home() {
   const { t } = useApp();
-  return <div className="grid">
-    <Link className="big sos" to="/emergency">{t('emergency')}</Link>
-    <Link className="big" to="/hospitals">{t('hospital')}</Link><Link className="big" to="/doctors">{t('doctor')}</Link>
-    <Link className="big" to="/hospitals?beds=true">{t('bed')}</Link><Link className="big" to="/blood">{t('blood')}</Link>
-    <Link className="big" to="/ambulance">{t('ambulance')}</Link><Link className="big" to="/complaints">{t('report')}</Link><Link className="big" to="/schemes">Government schemes</Link></div>;
+  return <div className="home-page">
+    <section className="hero">
+      <div className="hero-copy">
+        <span className="eyebrow"><span className="eyebrow-dot" /> Trusted support for families</span>
+        <h1>Healthcare services<br className="desktop-break" /> designed around<br className="desktop-break" /> your care.</h1>
+        <p>Find expert doctors, compare hospitals, and explore government health schemes with a simple patient-first platform built for faster, safer care.</p>
+        <div className="hero-actions"><Link className="b hero-primary" to="/doctors">Find a doctor</Link><Link className="hero-secondary" to="/hospitals">View hospitals</Link></div>
+        <div className="hero-stats"><div><strong>1.2k+</strong><span>Verified doctors</span></div><div><strong>240+</strong><span>Hospitals</span></div><div><strong>96%</strong><span>Patient satisfaction</span></div></div>
+      </div>
+      <aside className="hero-panel" aria-label="Care highlights">
+        <article className="doctor-highlight"><div className="doctor-avatar">AS</div><div className="doctor-meta"><strong>Dr. Aisha Sharma</strong><span>Cardiologist · 14 years</span></div><div className="doctor-rating"><span aria-label="5 stars">★★★★★</span><span>4.9 rating</span><span className="case-count">3,200+ cases</span></div></article>
+        <article className="availability-card"><div className="availability-heading"><strong>Hospital availability</strong><span>Today</span></div><div><span>Private hospitals</span><b>18 available</b></div><div><span>Government hospitals</span><b>24 available</b></div><div><span>ICU / beds</span><b>128 open</b></div></article>
+      </aside>
+    </section>
+    <section className="quick-section"><div className="section-heading"><div><span className="section-kicker">HERE WHEN YOU NEED US</span><h2>Find the care you need</h2></div><Link to="/help">Explore all services <span aria-hidden="true">→</span></Link></div>
+      <div className="quick-grid">
+        <Link className="quick-card quick-emergency" to="/emergency"><span className="quick-icon">✚</span><span><strong>{t('emergency')}</strong><small>Get urgent help nearby</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/doctors"><span className="quick-icon">＋</span><span><strong>{t('doctor')}</strong><small>Browse verified specialists</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/hospitals"><span className="quick-icon">⌂</span><span><strong>{t('hospital')}</strong><small>Compare local facilities</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/hospitals?beds=true"><span className="quick-icon">♡</span><span><strong>{t('bed')}</strong><small>Check available beds</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/blood"><span className="quick-icon">滴</span><span><strong>{t('blood')}</strong><small>Find blood banks</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/ambulance"><span className="quick-icon">＋</span><span><strong>{t('ambulance')}</strong><small>Locate an ambulance</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/schemes"><span className="quick-icon">◈</span><span><strong>Health schemes</strong><small>Explore public support</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/complaints"><span className="quick-icon">☷</span><span><strong>{t('report')}</strong><small>Share a care concern</small></span><span className="quick-arrow">↗</span></Link>
+      </div>
+    </section>
+  </div>;
 }
 
 function Schemes() {
@@ -92,10 +114,75 @@ function Emergency() {
 }
 
 function Blood() {
-  const { t } = useApp(), [group, setGroup] = useState(''), [city, setCity] = useState(''), [s, setS] = useState(null);
-  useEffect(() => { cachedGet(`/blood?group=${encodeURIComponent(group)}&city=${city}`).then(setS).catch(() => setS({ data: [] })); }, [group, city]);
-  return <><h2>{t('blood')}</h2><p className="card">{t('bloodNote')}</p><div className="row"><select aria-label="Blood group" value={group} onChange={(e) => setGroup(e.target.value)}><option value="">All groups</option>{['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((g) => <option key={g}>{g}</option>)}</select><input aria-label="City" placeholder="City" value={city} onChange={(e) => setCity(e.target.value)} /></div>
-    {s?.data.map((b) => <article className="card" key={b._id}><h3>{b.name}</h3>{b.inventory.map((i) => <span key={i.group} className={`tag ${i.units > 5 ? 'AVAILABLE' : i.units ? 'LIMITED' : 'FULL'}`}>{i.group}: {i.units > 5 ? 'Available' : i.units ? 'Limited' : 'None'}</span>)}<br />{b.inventory[0] && <Freshness at={b.inventory[0].updatedAt} fromCache={s.fromCache} />}{b.phone && <p><a href={`tel:${b.phone}`}>{t('call')} {b.phone}</a></p>}</article>)}</>;
+  const { t } = useApp();
+  const [group, setGroup] = useState(''), [country, setCountry] = useState(''), [stateName, setStateName] = useState(''), [district, setDistrict] = useState(''), [region, setRegion] = useState('');
+  const [countries, setCountries] = useState([]), [states, setStates] = useState([]), [districts, setDistricts] = useState([]), [regions, setRegions] = useState([]);
+  const [term, setTerm] = useState(''), [pos, setPos] = useState(null), [s, setS] = useState(null), [message, setMessage] = useState(''), [loading, setLoading] = useState(false);
+  useEffect(() => { api('/locations?path=Asia').then((d) => setCountries(d.items || [])).catch(() => setCountries(['India'])); }, []);
+  useEffect(() => {
+    setStates([]); setStateName(''); setDistricts([]); setDistrict(''); setRegions([]); setRegion('');
+    let active = true;
+    if (country) api('/locations?path=' + encodeURIComponent(`Asia>${country}`)).then((d) => { if (active) setStates(d.items || []); }).catch(() => { if (active) setStates([]); });
+    return () => { active = false; };
+  }, [country]);
+  useEffect(() => {
+    setDistricts([]); setDistrict(''); setRegions([]); setRegion('');
+    let active = true;
+    if (country && stateName) api('/locations?path=' + encodeURIComponent(`Asia>${country}>${stateName}`)).then((d) => { if (active) setDistricts(d.items || []); }).catch(() => { if (active) setDistricts([]); });
+    return () => { active = false; };
+  }, [country, stateName]);
+  useEffect(() => {
+    setRegions([]); setRegion('');
+    let active = true;
+    if (country && stateName && district) api('/locations?path=' + encodeURIComponent(`Asia>${country}>${stateName}>${district}`)).then((d) => { if (active) setRegions(d.items || []); }).catch(() => { if (active) setRegions([]); });
+    return () => { active = false; };
+  }, [country, stateName, district]);
+  useEffect(() => {
+    const query = new URLSearchParams();
+    if (group) query.set('group', group);
+    if (country) query.set('country', country);
+    if (stateName) query.set('state', stateName);
+    if (district) query.set('district', district);
+    if (region) query.set('region', region);
+    if (term.trim()) query.set('q', term.trim());
+    if (pos) { query.set('lat', pos.lat); query.set('lng', pos.lng); query.set('radius', '50000'); }
+    let active = true;
+    setLoading(true);
+    setMessage('');
+    cachedGet('/blood?' + query.toString()).then((result) => { if (active) setS(result); }).catch((e) => { if (active) { setS({ data: [] }); setMessage(e.message); } }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [group, country, stateName, district, region, term, pos?.lat, pos?.lng]);
+  const useLocation = () => {
+    if (!navigator.geolocation) { setMessage('Location is not available in this browser. Search by city instead.'); return; }
+    setMessage('');
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => { setPos({ lat: coords.latitude, lng: coords.longitude }); setMessage('Showing blood banks near your location.'); },
+      () => setMessage('Could not access your location. Allow location permission or search by city.'),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    );
+  };
+  const reset = () => { setGroup(''); setCountry(''); setStateName(''); setDistrict(''); setRegion(''); setTerm(''); setPos(null); setMessage(''); };
+  return <><h2>{t('blood')}</h2><p className="card">{t('bloodNote')}</p>
+    <section className="card" aria-label="Blood bank filters">
+      <div className="row">
+        <div style={{ flex: '1 1 180px' }}><label htmlFor="blood-group">Blood group</label><select id="blood-group" value={group} onChange={(e) => setGroup(e.target.value)}><option value="">All blood groups</option>{['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map((g) => <option key={g} value={g}>{g}</option>)}</select></div>
+        <div style={{ flex: '2 1 240px' }}><label htmlFor="blood-search">Search blood bank</label><input id="blood-search" type="search" placeholder="Type a blood bank name" value={term} onChange={(e) => setTerm(e.target.value)} /></div>
+      </div>
+      <h3>Location filters</h3><p className="stale">Choose each level to narrow results. The list updates as you change filters.</p>
+      <div className="row">
+        <div style={{ flex: '1 1 180px' }}><label htmlFor="blood-country">Country</label><select id="blood-country" value={country} onChange={(e) => setCountry(e.target.value)}><option value="">All countries</option>{countries.map((v) => <option key={v}>{v}</option>)}</select></div>
+        <div style={{ flex: '1 1 180px' }}><label htmlFor="blood-state">State</label><select id="blood-state" value={stateName} disabled={!country} onChange={(e) => setStateName(e.target.value)}><option value="">All states</option>{states.map((v) => <option key={v}>{v}</option>)}</select></div>
+        <div style={{ flex: '1 1 180px' }}><label htmlFor="blood-district">District</label><select id="blood-district" value={district} disabled={!stateName} onChange={(e) => setDistrict(e.target.value)}><option value="">All districts</option>{districts.map((v) => <option key={v}>{v}</option>)}</select></div>
+        <div style={{ flex: '1 1 180px' }}><label htmlFor="blood-region">Region / area</label><select id="blood-region" value={region} disabled={!district} onChange={(e) => setRegion(e.target.value)}><option value="">All regions</option>{regions.map((v) => <option key={v}>{v}</option>)}</select></div>
+      </div>
+      <div className="row" style={{ marginTop: '.6rem' }}><button type="button" className="b" onClick={useLocation}>◎ Use my location</button>{pos && <button type="button" className="b" onClick={() => setPos(null)}>Remove location</button>}<button type="button" className="b" onClick={reset}>Clear filters</button></div>
+      {message && <p role="status" className="stale">{message}</p>}{pos && <p className="stale">Showing banks within 50 km. Location is used only for this search.</p>}
+    </section>
+    {loading && <p role="status" className="stale">Updating blood bank results…</p>}
+    {s?.fromCache && <p className="card stale">Showing saved results; availability may be out of date. Call to confirm.</p>}
+    {s?.data.map((b) => <article className="card" key={b._id}><h3>{b.name}</h3><p>{[b.area, b.city].filter(Boolean).join(', ')}</p>{b.inventory.map((i) => <span key={i.group} className={`tag ${i.units > 5 ? 'AVAILABLE' : i.units ? 'LIMITED' : 'FULL'}`}>{i.group}: {i.units > 5 ? 'Available' : i.units ? 'Limited' : 'None'}</span>)}<br />{b.inventory[0] && <Freshness at={b.inventory[0].updatedAt} fromCache={s.fromCache} />}{b.phone && <p><a href={`tel:${b.phone}`}>{t('call')} {b.phone}</a></p>}</article>)}
+    {s && !loading && !s.data.length && <p className="card">No blood banks match these filters. Try a broader location, another blood group, or a different search.</p>}
+  </>;
 }
 
 function Ambulance() {

@@ -27,9 +27,10 @@ export const Doctor = model('Doctor', new Schema({
   licenseNo: String, experience: Number, fee: Number, languages: [String], modes: [String], slots: [{ day: Number, from: String, to: String }],
   verified: { type: Boolean, default: false }, rating: { type: Number, default: 0 }, ratingCount: { type: Number, default: 0 } }, T));
 
-const bb = new Schema({ name: String, phone: String, city: String, area: String, location: point, verified: Boolean,
+const bb = new Schema({ name: String, phone: String, country: { type: String, default: 'India' }, state: String, district: String, region: String, city: String, area: String, location: point, verified: Boolean,
   inventory: [{ group: { type: String, enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] }, units: Number, updatedAt: { type: Date, default: Date.now } }] }, T);
 bb.index({ location: '2dsphere' });
+bb.index({ country: 1, state: 1, district: 1, region: 1 });
 export const BloodBank = model('BloodBank', bb);
 
 const am = new Schema({ vehicleId: { type: String, unique: true }, type: String, agency: String, phone: String, equipment: [String],

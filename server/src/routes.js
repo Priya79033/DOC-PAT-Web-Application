@@ -7,6 +7,7 @@ const r = Router();
 const stale = (d, h = 6) => !d || Date.now() - new Date(d).getTime() > h * 36e5;
 const near = (q, max = 25000) => (q.lat && q.lng ? { location: { $near: { $geometry: { type: 'Point', coordinates: [+q.lng, +q.lat] }, $maxDistance: +q.radius || max } } } : {});
 const page = (q) => ({ skip: (Math.max(+q.page || 1, 1) - 1) * 20, limit: Math.min(+q.limit || 20, 50) });
+const exactText = (value) => new RegExp('^' + String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
 
 // ---------- AUTH ----------
 const reg = z.object({ name: z.string().min(2), email: z.string().email().optional(), phone: z.string().regex(/^\+?\d{10,13}$/).optional(),
@@ -68,7 +69,10 @@ r.put('/doctors/me', auth(), allow('DOCTOR'), wrap(async (req, res) => {
 
 // ---------- BLOOD & AMBULANCE ----------
 r.get('/blood', wrap(async (req, res) => {
-  const f = { ...near(req.query, 50000) }; if (req.query.city) f.city = new RegExp('^' + req.query.city, 'i');
+  const f = { ...near(req.query, 50000) };
+  for (const key of ['country', 'state', 'district', 'region']) if (req.query[key]) f[key] = exactText(req.query[key]);
+  if (req.query.city) f.city = exactText(req.query.city);
+  if (req.query.q) f.name = new RegExp(String(req.query.q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
   const banks = await M.BloodBank.find(f, null, page(req.query)).lean();
   ok(res, banks.map((b) => ({ ...b, inventory: req.query.group ? b.inventory.filter((i) => i.group === req.query.group) : b.inventory,
     notice: 'Availability is subject to confirmation from the blood bank.' })));
