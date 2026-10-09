@@ -1,8 +1,11 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import * as M from './models.js';
 import { ok, wrap, HttpError, auth, allow, validate, audit, upload, scanFile, notify, setCookies, verifyRefresh } from './lib.js';
+import { addFleetStream, publishFleetUpdate } from './live.js';
+import { HEALTH_SCHEMES } from './schemes.js';
 const r = Router();
 const stale = (d, h = 6) => !d || Date.now() - new Date(d).getTime() > h * 36e5;
 const near = (q, max = 25000) => (q.lat && q.lng ? { location: { $near: { $geometry: { type: 'Point', coordinates: [+q.lng, +q.lat] }, $maxDistance: +q.radius || max } } } : {});
@@ -11,16 +14,62 @@ const exactText = (value) => new RegExp('^' + String(value).replace(/[.*+?^${}()
 
 // ---------- AUTH ----------
 const reg = z.object({ name: z.string().min(2), email: z.string().email().optional(), phone: z.string().regex(/^\+?\d{10,13}$/).optional(),
-  password: z.string().min(8), role: z.enum(['PATIENT', 'DOCTOR', 'HOSPITAL_ADMIN']).default('PATIENT') }).refine((d) => d.email || d.phone, 'email or phone required');
+  password: z.string().min(8), role: z.enum(['PATIENT', 'DOCTOR', 'HOSPITAL_ADMIN', 'AMBULANCE_DRIVER', 'GOVERNMENT_ADMIN', 'SUPER_ADMIN']).default('PATIENT'), inviteToken: z.string().optional(), identityConsent: z.boolean().optional(),
+  patientProfile: z.object({ age: z.number().int().min(0).max(120), gender: z.enum(['FEMALE', 'MALE', 'OTHER', 'PREFER_NOT_TO_SAY']), bloodGroup: z.enum(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']).optional() }).optional(),
+  driverProfile: z.object({ vehicleId: z.string().min(2), inviteToken: z.string().min(16) }).optional(),
+  doctorProfile: z.object({ qualification: z.string().min(2), specialization: z.string().min(2), licenseNo: z.string().min(3), experience: z.number().int().min(0).max(80), hospital: z.string().min(1), fee: z.number().nonnegative().optional() }).optional(),
+  hospitalProfile: z.object({ name: z.string().min(2), licenseNumber: z.string().min(3), type: z.enum(['GOVERNMENT', 'PRIVATE']), city: z.string().min(2), area: z.string().optional(), phone: z.string().optional(), lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) }).optional()
+}).refine((d) => d.email || d.phone, 'email or phone required')
+  .refine((d) => ['PATIENT', 'AMBULANCE_DRIVER'].includes(d.role) || d.identityConsent === true, 'Identity review consent is required for this account role')
+  .refine((d) => d.role !== 'PATIENT' || !!d.patientProfile, 'Patient age and gender are required')
+  .refine((d) => d.role === 'PATIENT' || !d.patientProfile, 'Patient details are only valid for patient accounts')
+  .refine((d) => d.role !== 'AMBULANCE_DRIVER' || !!d.driverProfile, 'Vehicle pairing details are required for drivers')
+  .refine((d) => d.role === 'AMBULANCE_DRIVER' || !d.driverProfile, 'Vehicle pairing details are only valid for driver accounts')
+  .refine((d) => d.role !== 'DOCTOR' || !!d.doctorProfile, 'Doctor profile details are required')
+  .refine((d) => d.role !== 'HOSPITAL_ADMIN' || !!d.hospitalProfile, 'Hospital details are required')
+  .refine((d) => d.role === 'DOCTOR' || !d.doctorProfile, 'Doctor details are only valid for doctor accounts')
+  .refine((d) => d.role === 'HOSPITAL_ADMIN' || !d.hospitalProfile, 'Hospital details are only valid for hospital-admin accounts');
 r.post('/auth/register', validate(reg), wrap(async (req, res) => {
-  const { password, ...d } = req.body;
-  const u = await M.User.create({ ...d, passwordHash: await bcrypt.hash(password, 12) });
+  const { password, inviteToken, identityConsent, patientProfile, driverProfile, doctorProfile, hospitalProfile, ...d } = req.body;
+  if (doctorProfile && !(await M.Hospital.exists({ _id: doctorProfile.hospital, verified: true, deletedAt: null }))) throw new HttpError(400, 'Choose an approved registered hospital');
+  let invite;
+  if (['GOVERNMENT_ADMIN', 'SUPER_ADMIN'].includes(d.role)) {
+    if (!inviteToken) throw new HttpError(403, 'Government and super-admin accounts require an administrator invitation');
+    const tokenHash = crypto.createHash('sha256').update(inviteToken).digest('hex');
+    invite = await M.RoleInvite.findOneAndUpdate({ tokenHash, role: d.role, usedAt: null, expiresAt: { $gt: new Date() } }, { usedAt: new Date() }, { new: true });
+    if (!invite) throw new HttpError(403, 'Invitation is invalid, expired, or already used');
+  }
+  const authorized = !['PATIENT', 'AMBULANCE_DRIVER'].includes(d.role), submittedAt = authorized ? new Date() : undefined;
+  const identityChecks = authorized ? { aadhaar: { status: 'PENDING' }, pan: { status: 'PENDING' }, digilocker: { status: 'PENDING' }, submittedAt, consentAt: submittedAt } : undefined;
+  let u, createdHospital, assignedAmbulance;
+  try {
+    u = await M.User.create({ ...d, ...(patientProfile || {}), identityChecks, passwordHash: await bcrypt.hash(password, 12) });
+    if (doctorProfile) await M.Doctor.create({ ...doctorProfile, user: u._id });
+    if (driverProfile) {
+      const inviteHash = crypto.createHash('sha256').update(driverProfile.inviteToken).digest('hex');
+      assignedAmbulance = await M.Ambulance.findOneAndUpdate({ vehicleId: driverProfile.vehicleId, driverInviteHash: inviteHash, driverInviteExpiresAt: { $gt: new Date() }, driver: { $exists: false } }, { $set: { driver: u._id }, $unset: { driverInviteHash: 1, driverInviteExpiresAt: 1 } }, { new: true });
+      if (!assignedAmbulance) throw new HttpError(403, 'Driver invitation is invalid, expired, or already used');
+    }
+    if (hospitalProfile) {
+      const { lat, lng, ...profile } = hospitalProfile;
+      createdHospital = await M.Hospital.create({ ...profile, location: { type: 'Point', coordinates: [lng, lat] }, verified: false });
+      await M.User.updateOne({ _id: u._id }, { hospital: createdHospital._id });
+    }
+  } catch (e) {
+    if (assignedAmbulance) await M.Ambulance.updateOne({ _id: assignedAmbulance._id, driver: u?._id }, { $unset: { driver: 1 }, $set: { driverInviteHash: crypto.createHash('sha256').update(driverProfile.inviteToken).digest('hex'), driverInviteExpiresAt: new Date(Date.now() + 48 * 3600e3) } });
+    if (u) { await M.Doctor.deleteOne({ user: u._id }); await M.User.deleteOne({ _id: u._id }); }
+    if (createdHospital) await M.Hospital.deleteOne({ _id: createdHospital._id });
+    if (invite) await M.RoleInvite.updateOne({ _id: invite._id }, { $unset: { usedAt: 1 } });
+    throw e;
+  }
+  if (authorized) await M.Audit.create({ user: u._id, action: 'IDENTITY_CHECK_REQUEST', target: String(u._id), meta: { providers: ['aadhaar', 'pan', 'digilocker'], source: 'signup' }, ip: req.ip }).catch(() => {});
   setCookies(res, u); ok(res, { id: u._id, name: u.name, role: u.role }, 'Registered', 201);
 }));
-r.post('/auth/login', validate(z.object({ identifier: z.string(), password: z.string() })), wrap(async (req, res) => {
-  const { identifier, password } = req.body;
+r.post('/auth/login', validate(z.object({ identifier: z.string(), password: z.string(), role: z.enum(['PATIENT', 'DOCTOR', 'HOSPITAL_ADMIN', 'AMBULANCE_DRIVER', 'GOVERNMENT_ADMIN', 'SUPER_ADMIN']).optional() })), wrap(async (req, res) => {
+  const { identifier, password, role } = req.body;
   const u = await M.User.findOne({ $or: [{ email: identifier.toLowerCase() }, { phone: identifier }], deletedAt: null });
   if (!u || u.suspended || !(await bcrypt.compare(password, u.passwordHash))) throw new HttpError(401, 'Invalid credentials');
+  if (role && u.role !== role) throw new HttpError(403, 'This account does not use the selected role');
   setCookies(res, u); ok(res, { id: u._id, name: u.name, role: u.role }, 'Logged in');
 }));
 r.post('/auth/refresh', wrap(async (req, res) => {
@@ -31,17 +80,42 @@ r.post('/auth/refresh', wrap(async (req, res) => {
 r.post('/auth/logout', (req, res) => { res.clearCookie('at'); res.clearCookie('rt', { path: '/api/auth' }); ok(res, {}, 'Logged out'); });
 r.post('/auth/logout-all', auth(), wrap(async (req, res) => { await M.User.updateOne({ _id: req.user._id }, { $inc: { tokenVersion: 1 } }); res.clearCookie('at'); ok(res, {}, 'Logged out everywhere'); }));
 r.get('/auth/me', auth(), (req, res) => ok(res, { id: req.user._id, name: req.user.name, role: req.user.role, language: req.user.language }));
+r.get('/users/me', auth(), (req, res) => {
+  const { _id, name, email, phone, role, age, gender, bloodGroup, bio, location, language, createdAt } = req.user;
+  ok(res, { id: _id, name, email, phone, role, age, gender, bloodGroup, bio, location, language, createdAt });
+});
+r.patch('/users/me', auth(), validate(z.object({
+  name: z.string().trim().min(2).max(100).optional(),
+  age: z.number().int().min(0).max(120).nullable().optional(),
+  gender: z.enum(['FEMALE', 'MALE', 'OTHER', 'PREFER_NOT_TO_SAY']).nullable().optional(),
+  bloodGroup: z.enum(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']).nullable().optional(),
+  bio: z.string().trim().max(280).optional(),
+  location: z.string().trim().max(120).optional(),
+  language: z.enum(['en', 'hi']).optional(),
+}).strict().refine((data) => Object.keys(data).length > 0, 'At least one profile field is required')), wrap(async (req, res) => {
+  const updated = await M.User.findByIdAndUpdate(req.user._id, { $set: req.body }, { new: true, runValidators: true });
+  const { _id, name, email, phone, role, age, gender, bloodGroup, bio, location, language, createdAt } = updated;
+  ok(res, { id: _id, name, email, phone, role, age, gender, bloodGroup, bio, location, language, createdAt }, 'Profile updated');
+}));
 // OTP + password-reset: plug a provider into notify()/providers.sms, store hashed short-lived codes.
 
 // ---------- HOSPITALS ----------
 r.get('/hospitals', wrap(async (req, res) => {
   const q = req.query, f = { deletedAt: null, ...near(q) };
-  if (q.type) f.type = q.type; if (q.emergency === 'true') f.emergency = true; if (q.city) f.city = new RegExp('^' + q.city, 'i');
-  if (q.area) f.area = new RegExp('^' + q.area, 'i'); if (q.dept) f.departments = q.dept; if (q.scheme) f.schemes = q.scheme;
+  if (q.type) f.type = q.type; if (q.emergency === 'true') f.emergency = true; if (q.country) f.country = new RegExp('^' + q.country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); if (q.state) f.state = new RegExp('^' + q.state.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); if (q.city) f.city = new RegExp('^' + q.city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+  if (q.area && q.area !== '__all__') f.area = new RegExp('^' + q.area.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); if (q.dept) f.departments = q.dept; if (q.scheme) f.schemes = q.scheme;
   if (q.beds === 'true') f['beds.general.status'] = { $ne: 'FULL' }; if (q.icu === 'true') f['beds.icu.status'] = { $ne: 'FULL' };
   if (q.q) f.$text = { $search: q.q };
   const list = await M.Hospital.find(f, null, page(q)).lean();
   ok(res, list.map((h) => ({ ...h, bedsStale: Object.values(h.beds || {}).some((b) => stale(b.updatedAt)) })));
+}));
+r.get('/public/stats', wrap(async (_req, res) => {
+  const [doctors, hospitals, [ratings]] = await Promise.all([
+    M.Doctor.countDocuments({ verified: true }),
+    M.Hospital.countDocuments({ verified: true, deletedAt: null }),
+    M.Review.aggregate([{ $match: { hidden: false, 'scores.overall': { $gte: 1, $lte: 5 } } }, { $group: { _id: null, average: { $avg: '$scores.overall' }, count: { $sum: 1 } } }]),
+  ]);
+  ok(res, { verifiedDoctors: doctors, verifiedHospitals: hospitals, patientRating: ratings ? +ratings.average.toFixed(1) : null, reviewCount: ratings?.count || 0 });
 }));
 r.get('/hospitals/:id', wrap(async (req, res) => ok(res, await M.Hospital.findById(req.params.id).lean())));
 r.patch('/hospitals/:id/beds', auth(), allow('HOSPITAL_ADMIN', 'GOVERNMENT_ADMIN'), wrap(async (req, res) => {
@@ -60,8 +134,9 @@ r.put('/hospitals/:id/prices', auth(), allow('HOSPITAL_ADMIN'), wrap(async (req,
 // ---------- DOCTORS ----------
 r.get('/doctors', wrap(async (req, res) => {
   const q = req.query, f = {}; if (q.specialization) f.specialization = new RegExp(q.specialization, 'i'); if (q.hospital) f.hospital = q.hospital; if (q.language) f.languages = q.language;
-  ok(res, await M.Doctor.find(f, null, page(q)).populate('user', 'name').populate('hospital', 'name city').lean());
+  ok(res, await M.Doctor.find(f, null, page(q)).sort({ verified: -1, rating: -1, ratingCount: -1, experience: -1 }).populate('user', 'name').populate('hospital', 'name city').lean());
 }));
+r.get('/doctors/departments', wrap(async (_req, res) => ok(res, (await M.Doctor.distinct('specialization')).filter(Boolean).sort((a, b) => a.localeCompare(b))));
 r.put('/doctors/me', auth(), allow('DOCTOR'), wrap(async (req, res) => {
   const { verified, rating, ratingCount, user, ...d } = req.body; // verification is admin-only
   ok(res, await M.Doctor.findOneAndUpdate({ user: req.user._id }, d, { upsert: true, new: true }), 'Profile saved');
@@ -77,14 +152,115 @@ r.get('/blood', wrap(async (req, res) => {
   ok(res, banks.map((b) => ({ ...b, inventory: req.query.group ? b.inventory.filter((i) => i.group === req.query.group) : b.inventory,
     notice: 'Availability is subject to confirmation from the blood bank.' })));
 }));
-r.get('/ambulances', wrap(async (req, res) => ok(res, await M.Ambulance.find({ available: true, ...near(req.query, 30000) }).limit(20).lean())));
+r.get('/ambulances', wrap(async (req, res) => {
+  const list = await M.Ambulance.find({ available: true, ...near(req.query, 30000) }).limit(20).lean();
+  ok(res, list.map((a) => ({ _id: a._id, vehicleId: a.vehicleId, type: a.type, agency: a.agency, phone: a.phone, status: a.status, updatedAt: a.updatedAt, approxLocation: a.location.coordinates.map((n) => +n.toFixed(2)) })));
+}));
+// Exact fleet coordinates are private but available to signed-in patients, doctors and staff.
+r.get('/ambulances/live', auth(), wrap(async (req, res) => {
+  const items = await M.Ambulance.find({}).select('vehicleId type status location updatedAt site').populate('site', 'name location').sort('vehicleId').lean();
+  ok(res, items);
+}));
+r.get('/ambulances/stream', auth(), (req, res) => {
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  res.flushHeaders(); addFleetStream(res); res.write('retry: 5000\ndata: {"connected":true}\n\n');
+  const heartbeat = setInterval(() => { if (!res.destroyed && !res.writableEnded) res.write(': keep-alive\n\n'); }, 20000);
+  res.on('close', () => clearInterval(heartbeat));
+});
+// Ambulance fleet registry and location stream. Location updates are authenticated and
+// geofenced against registered sites; coordinates are visible only to signed-in staff.
+const fleetAccess = [auth(), allow('HOSPITAL_ADMIN', 'GOVERNMENT_ADMIN')];
+const belongsToHospital = (user, hospital) => user.role !== 'HOSPITAL_ADMIN' || String(user.hospital || '') === String(hospital || '');
+r.get('/ambulances/fleet', ...fleetAccess, wrap(async (req, res) => {
+  const filter = req.user.role === 'HOSPITAL_ADMIN' ? { hospital: req.user.hospital } : {};
+  const fleet = await M.Ambulance.find(filter).populate('site', 'name address location radiusMeters').populate('hospital', 'name city').populate('driver', 'name phone email').sort('vehicleId').lean();
+  ok(res, fleet.map(({ driverInviteHash, driverInviteExpiresAt, ...a }) => ({ ...a, driverInvitePending: !!driverInviteHash && driverInviteExpiresAt > new Date() })));
+}));
+r.post('/ambulances/fleet', ...fleetAccess, wrap(async (req, res) => {
+  const d = z.object({ vehicleId: z.string().min(2).max(40), plateNumber: z.string().min(3).max(20), type: z.string().min(2), agency: z.string().min(2), phone: z.string().min(3), equipment: z.array(z.string()).default([]), crew: z.string().optional(), site: z.string().optional(), hospital: z.string().optional(), lat: z.number().min(-90).max(90).optional(), lng: z.number().min(-180).max(180).optional() }).parse(req.body);
+  const hospital = req.user.role === 'HOSPITAL_ADMIN' ? req.user.hospital : d.hospital;
+  if (req.user.role === 'HOSPITAL_ADMIN' && !hospital) throw new HttpError(403, 'Register and verify a hospital before adding vehicles');
+  if (d.site && !(await M.Site.exists({ _id: d.site, active: true, ...(hospital ? { hospital } : {}) }))) throw new HttpError(400, 'Choose an active site belonging to this hospital');
+  const { lat, lng, hospital: _hospital, ...fields } = d; const coords = lat === undefined || lng === undefined ? undefined : { type: 'Point', coordinates: [lng, lat] };
+  if (req.user.role === 'GOVERNMENT_ADMIN' && !hospital) throw new HttpError(400, 'Link the vehicle to a registered hospital');
+  if (hospital && !(await M.Hospital.exists({ _id: hospital, verified: true }))) throw new HttpError(400, 'Ambulances must be linked to an approved hospital');
+  const driverInviteToken = crypto.randomBytes(24).toString('base64url');
+  const a = await M.Ambulance.create({ ...fields, hospital, site: d.site, driverInviteHash: crypto.createHash('sha256').update(driverInviteToken).digest('hex'), driverInviteExpiresAt: new Date(Date.now() + 48 * 3600e3), ...(coords && { location: coords }), status: 'AVAILABLE', available: true });
+  publishFleetUpdate(a._id);
+  const { driverInviteHash, driverInviteExpiresAt, ...vehicle } = a.toObject();
+  await audit(req, 'AMBULANCE_REGISTER', a._id, { vehicleId: a.vehicleId }); ok(res, { ...vehicle, driverInviteToken }, 'Ambulance registered. Give the one-time driver invitation to its assigned driver.', 201);
+}));
+r.post('/ambulances/:id/driver-invite', ...fleetAccess, wrap(async (req, res) => {
+  const a = await M.Ambulance.findById(req.params.id); if (!a || !belongsToHospital(req.user, a.hospital)) throw new HttpError(404, 'Ambulance not found');
+  if (a.driver) throw new HttpError(409, 'A driver is already paired with this ambulance');
+  const token = crypto.randomBytes(24).toString('base64url'); a.driverInviteHash = crypto.createHash('sha256').update(token).digest('hex'); a.driverInviteExpiresAt = new Date(Date.now() + 48 * 3600e3); await a.save();
+  await audit(req, 'AMBULANCE_DRIVER_INVITE', a._id, { expiresAt: a.driverInviteExpiresAt }); ok(res, { vehicleId: a.vehicleId, driverInviteToken: token, expiresAt: a.driverInviteExpiresAt }, 'One-time driver invitation created');
+}));
+r.post('/sites', ...fleetAccess, wrap(async (req, res) => {
+  const d = z.object({ name: z.string().min(2), address: z.string().optional(), lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180), radiusMeters: z.number().int().min(25).max(5000).default(150), hospital: z.string().optional() }).parse(req.body);
+  const hospital = req.user.role === 'HOSPITAL_ADMIN' ? req.user.hospital : d.hospital;
+  if (req.user.role === 'HOSPITAL_ADMIN' && !hospital) throw new HttpError(403, 'Register a hospital before adding a site');
+  if (req.user.role === 'GOVERNMENT_ADMIN' && !hospital) throw new HttpError(400, 'Link the site to a registered hospital');
+  if (hospital && !(await M.Hospital.exists({ _id: hospital, verified: true }))) throw new HttpError(400, 'Sites must belong to an approved hospital');
+  const { lat, lng, hospital: _hospital, ...fields } = d; const site = await M.Site.create({ ...fields, hospital, location: { type: 'Point', coordinates: [lng, lat] } });
+  publishFleetUpdate('*');
+  await audit(req, 'AMBULANCE_SITE_REGISTER', site._id); ok(res, site, 'Site registered', 201);
+}));
+r.get('/sites', ...fleetAccess, wrap(async (req, res) => ok(res, await M.Site.find({ active: true, ...(req.user.role === 'HOSPITAL_ADMIN' ? { hospital: req.user.hospital } : {}) }).populate('hospital', 'name').lean())));
+r.patch('/ambulances/:id/location', ...fleetAccess, wrap(async (req, res) => {
+  const d = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180), status: z.enum(['AVAILABLE', 'DISPATCHED', 'MAINTENANCE']).optional() }).parse(req.body);
+  const a = await M.Ambulance.findById(req.params.id); if (!a || !belongsToHospital(req.user, a.hospital)) throw new HttpError(404, 'Ambulance not found');
+  const sites = await M.Site.find({ active: true, ...(a.hospital ? { hospital: a.hospital } : {}) }).lean();
+  const distance = (p) => { const rad = (n) => n * Math.PI / 180, [lng, lat] = p.coordinates, dLat = rad(d.lat - lat), dLng = rad(d.lng - lng), h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(lat)) * Math.cos(rad(d.lat)) * Math.sin(dLng / 2) ** 2; return 6371000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h)); };
+  const site = sites.filter((s) => distance(s.location) <= s.radiusMeters).sort((a, b) => distance(a.location) - distance(b.location))[0];
+  const wasDispatched = a.status === 'DISPATCHED';
+  a.location = { type: 'Point', coordinates: [d.lng, d.lat] }; a.updatedAt = new Date(); a.site = site?._id || null;
+  a.status = site ? (wasDispatched ? 'DISPATCHED' : 'ON_SITE') : (d.status || (wasDispatched ? 'DISPATCHED' : 'AVAILABLE')); a.available = !wasDispatched && (a.status === 'AVAILABLE' || a.status === 'ON_SITE'); await a.save();
+  publishFleetUpdate(a._id);
+  await audit(req, 'AMBULANCE_LOCATION_UPDATE', a._id, { site: site?._id, status: a.status }); ok(res, { id: a._id, status: a.status, site: site?.name || null, location: a.location, updatedAt: a.updatedAt });
+}));
+r.get('/driver/me', auth(), allow('AMBULANCE_DRIVER'), wrap(async (req, res) => {
+  const vehicle = await M.Ambulance.findOne({ driver: req.user._id }).select('-driverInviteHash -driverInviteExpiresAt').populate('site', 'name address radiusMeters').populate('hospital', 'name city').lean();
+  if (!vehicle) throw new HttpError(404, 'No ambulance is paired with this driver account'); ok(res, vehicle);
+}));
+r.patch('/driver/location', auth(), allow('AMBULANCE_DRIVER'), wrap(async (req, res) => {
+  const d = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) }).parse(req.body);
+  const a = await M.Ambulance.findOne({ driver: req.user._id }); if (!a) throw new HttpError(404, 'No ambulance is paired with this driver account');
+  const sites = await M.Site.find({ active: true, hospital: a.hospital }).lean();
+  const distance = (p) => { const rad = (n) => n * Math.PI / 180, [lng, lat] = p.coordinates, dLat = rad(d.lat - lat), dLng = rad(d.lng - lng), h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(lat)) * Math.cos(rad(d.lat)) * Math.sin(dLng / 2) ** 2; return 6371000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h)); };
+  const site = sites.filter((s) => distance(s.location) <= s.radiusMeters).sort((a, b) => distance(a.location) - distance(b.location))[0], wasDispatched = a.status === 'DISPATCHED';
+  let arrived = false;
+  if (wasDispatched) {
+    const trip = await M.EmergencyRequest.findOne({ ambulance: a._id, status: 'DISPATCHED' }).sort('-createdAt');
+    if (trip && distance(trip.location) <= 100) { trip.status = 'ARRIVED'; await trip.save(); arrived = true; await notify(trip.patient, 'Ambulance arrived', `${a.vehicleId} has reached your location.`); }
+  }
+  a.location = { type: 'Point', coordinates: [d.lng, d.lat] }; a.updatedAt = new Date(); a.site = site?._id || null;
+  a.status = arrived ? 'ON_SITE' : site ? (wasDispatched ? 'DISPATCHED' : 'ON_SITE') : (wasDispatched ? 'DISPATCHED' : 'AVAILABLE');
+  a.available = !wasDispatched; await a.save();
+  publishFleetUpdate(a._id);
+  await audit(req, 'AMBULANCE_LOCATION_UPDATE', a._id, { site: site?._id, status: a.status });
+  ok(res, { vehicleId: a.vehicleId, status: a.status, site: site?.name || null, location: a.location, updatedAt: a.updatedAt });
+}));
 r.post('/emergency/requests', auth(), wrap(async (req, res) => {
   const d = z.object({ kind: z.string().default('AMBULANCE'), lat: z.number(), lng: z.number(), note: z.string().max(500).optional(), clientId: z.string().optional() }).parse(req.body);
-  const ex = d.clientId && await M.EmergencyRequest.findOne({ clientId: d.clientId }); if (ex) return ok(res, ex, 'Already received');
-  ok(res, await M.EmergencyRequest.create({ patient: req.user._id, kind: d.kind, note: d.note, clientId: d.clientId, location: { type: 'Point', coordinates: [d.lng, d.lat] } }), 'Request sent', 201);
+  const ex = d.clientId && await M.EmergencyRequest.findOne({ clientId: d.clientId, patient: req.user._id }); if (ex) return ok(res, ex, 'Already received');
+  const point = { type: 'Point', coordinates: [d.lng, d.lat] };
+  const nearest = d.kind === 'AMBULANCE' ? await M.Ambulance.findOne({ available: true, status: { $in: ['AVAILABLE', 'ON_SITE'] }, location: { $near: { $geometry: point, $maxDistance: 30000 } } }) : null;
+  if (nearest) { nearest.available = false; nearest.status = 'DISPATCHED'; nearest.site = null; await nearest.save(); publishFleetUpdate(nearest._id); }
+  const request = await M.EmergencyRequest.create({ patient: req.user._id, kind: d.kind, note: d.note, clientId: d.clientId, location: point, ...(nearest && { ambulance: nearest._id, status: 'DISPATCHED' }) });
+  ok(res, request, nearest ? 'Request sent; an available nearby ambulance was assigned' : 'Request sent; call 108 for immediate assistance', 201);
 }));
 r.get('/emergency/requests/mine', auth(), wrap(async (req, res) => ok(res, await M.EmergencyRequest.find({ patient: req.user._id }).sort('-createdAt').limit(20))));
-r.patch('/ambulances/:id', auth(), allow('HOSPITAL_ADMIN', 'GOVERNMENT_ADMIN'), wrap(async (req, res) => ok(res, await M.Ambulance.findByIdAndUpdate(req.params.id, { available: !!req.body.available, updatedAt: new Date() }, { new: true }))));
+r.get('/emergency/requests/:id', auth(), wrap(async (req, res) => {
+  const trip = await M.EmergencyRequest.findOne({ _id: req.params.id, patient: req.user._id }).populate({ path: 'ambulance', select: 'vehicleId type status location updatedAt site', populate: { path: 'site', select: 'name' } }).lean();
+  if (!trip) throw new HttpError(404, 'Emergency request not found'); ok(res, trip);
+}));
+r.patch('/ambulances/:id', auth(), allow('HOSPITAL_ADMIN', 'GOVERNMENT_ADMIN'), wrap(async (req, res) => {
+  const a = await M.Ambulance.findById(req.params.id); if (!a || !belongsToHospital(req.user, a.hospital)) throw new HttpError(404, 'Ambulance not found');
+  const status = z.enum(['AVAILABLE', 'DISPATCHED', 'ON_SITE', 'MAINTENANCE']).parse(req.body.status || (req.body.available ? 'AVAILABLE' : 'MAINTENANCE'));
+  a.status = status; a.available = status === 'AVAILABLE' || status === 'ON_SITE';
+  if (!a.available) a.site = null; a.updatedAt = new Date(); await a.save(); publishFleetUpdate(a._id); ok(res, a, 'Fleet status updated');
+}));
 
 // ---------- APPOINTMENTS & REVIEWS ----------
 r.post('/appointments', auth(), allow('PATIENT'), wrap(async (req, res) => {
@@ -129,6 +305,14 @@ r.get('/complaints/track/:cid', auth(), wrap(async (req, res) => {
 
 // ---------- ADMIN ----------
 const admin = [auth(), allow('GOVERNMENT_ADMIN')];
+r.post('/admin/invites', ...admin, wrap(async (req, res) => {
+  const role = z.enum(['GOVERNMENT_ADMIN', 'SUPER_ADMIN']).parse(req.body.role);
+  if (role === 'SUPER_ADMIN' && req.user.role !== 'SUPER_ADMIN') throw new HttpError(403, 'Only a super admin can invite another super admin');
+  const token = crypto.randomBytes(32).toString('base64url');
+  await M.RoleInvite.create({ tokenHash: crypto.createHash('sha256').update(token).digest('hex'), role, createdBy: req.user._id, expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000) });
+  await audit(req, 'ROLE_INVITE_CREATE', role, { expiresInHours: 48 });
+  ok(res, { token, role, expiresInHours: 48 }, 'One-time invitation created', 201);
+}));
 r.get('/admin/stats', ...admin, wrap(async (req, res) => {
   const [patients, doctors, hospitals, complaints, pending, emergencies] = await Promise.all([M.User.countDocuments({ role: 'PATIENT' }), M.Doctor.countDocuments({ verified: true }), M.Hospital.countDocuments({ verified: true }),
     M.Complaint.countDocuments(), M.Complaint.countDocuments({ status: { $in: ['SUBMITTED', 'UNDER_REVIEW', 'INVESTIGATION'] } }), M.EmergencyRequest.countDocuments()]);
@@ -136,6 +320,10 @@ r.get('/admin/stats', ...admin, wrap(async (req, res) => {
 }));
 r.patch('/admin/verify/:kind/:id', ...admin, wrap(async (req, res) => {
   const Model = { doctor: M.Doctor, hospital: M.Hospital }[req.params.kind]; if (!Model) throw new HttpError(400, 'Bad kind');
+  if (req.params.kind === 'hospital' && req.body.verified) {
+    const h = await M.Hospital.findById(req.params.id).select('+verificationDocuments');
+    if (!h || !h.licenseNumber || !h.verificationDocuments?.length) throw new HttpError(400, 'Review the hospital licence number and uploaded proof documents before approval');
+  }
   await Model.updateOne({ _id: req.params.id }, { verified: !!req.body.verified }); await audit(req, 'VERIFY_' + req.params.kind.toUpperCase(), req.params.id, req.body); ok(res, {}, 'Updated');
 }));
 r.get('/admin/complaints', ...admin, wrap(async (req, res) => ok(res, await M.Complaint.find(req.query.status ? { status: req.query.status } : {}, null, page(req.query)).sort('-createdAt').lean())));
@@ -153,6 +341,9 @@ r.get('/admin/price-outliers', ...admin, wrap(async (req, res) => { // flags pri
   const out = []; for (const [s, v] of Object.entries(by)) { const m = v.map((x) => x.a).sort((a, b) => a - b)[Math.floor(v.length / 2)]; v.filter((x) => v.length > 2 && x.a > 2 * m).forEach((x) => out.push({ service: s, hospital: x.h, amount: x.a, median: m })); }
   ok(res, out);
 }));
-r.get('/schemes', wrap(async (req, res) => ok(res, await M.Scheme.find().sort('-createdAt').limit(20))));
+r.get('/schemes', wrap(async (_req, res) => {
+  const published = await M.Scheme.find().sort('-createdAt').lean();
+  ok(res, [...HEALTH_SCHEMES, ...published.map((scheme) => ({ ...scheme, id: String(scheme._id), scope: scheme.region || 'Published by HealthConnect administrator', summary: scheme.body, url: '', source: '' }))]);
+}));
 r.get('/notifications', auth(), wrap(async (req, res) => ok(res, await M.Notification.find({ user: req.user._id }).sort('-createdAt').limit(30))));
 export default r;

@@ -1,0 +1,148 @@
+// Curated health and medical programmes. Confirm current eligibility and local
+// availability on the linked government portal before applying.
+export const HEALTH_SCHEMES = [
+  {
+    id: 'ab-pmjay', title: 'Ayushman Bharat PM-JAY', titleHi: 'आयुष्मान भारत PM-JAY', scope: 'Central · India', category: 'Hospital treatment',
+    summary: 'Cashless secondary and tertiary hospital care at empanelled public and private hospitals for eligible families.',
+    summaryHi: 'पात्र परिवारों के लिए सूचीबद्ध सरकारी और निजी अस्पतालों में कैशलेस अस्पताल उपचार।',
+    eligibility: 'Families identified under the scheme’s current eligibility database. All people aged 70 or above are also eligible irrespective of income under the senior-citizen expansion; enrolment/e-KYC rules apply.',
+    eligibilityHi: 'वर्तमान पात्रता सूची में दर्ज परिवार। 70 वर्ष या अधिक आयु के सभी लोग आय की परवाह किए बिना वरिष्ठ नागरिक विस्तार के अंतर्गत पात्र हैं; नामांकन/e-KYC नियम लागू हैं।',
+    benefits: 'Up to ₹5 lakh per eligible family per year for covered hospitalisation. For eligible 70+ people in an already covered family, the senior-citizen cover is separate as per current rules.',
+    benefitsHi: 'पात्र परिवार के लिए सूचीबद्ध अस्पताल उपचार पर प्रति वर्ष ₹5 लाख तक। पहले से पात्र परिवार के 70+ सदस्यों के लिए वरिष्ठ नागरिक कवर वर्तमान नियमों के अनुसार अलग है।',
+    steps: 'Check eligibility and enrol at the official beneficiary portal or an Ayushman help desk at an empanelled hospital. Carry the documents requested during e-KYC.',
+    stepsHi: 'आधिकारिक लाभार्थी पोर्टल या सूचीबद्ध अस्पताल के आयुष्मान सहायता केंद्र पर पात्रता जाँचें और नामांकन करें। e-KYC के लिए माँगे गए दस्तावेज़ साथ रखें।',
+    url: 'https://beneficiary.nha.gov.in/', source: 'https://nha.gov.in/'
+  },
+  {
+    id: 'aam', title: 'Ayushman Arogya Mandir', titleHi: 'आयुष्मान आरोग्य मंदिर', scope: 'Central programme · local facility availability', category: 'Primary care',
+    summary: 'Expanded primary healthcare through public facilities, including maternal and child health, common illnesses, non-communicable disease care, essential medicines and diagnostics.',
+    summaryHi: 'सरकारी स्वास्थ्य केंद्रों के माध्यम से प्राथमिक स्वास्थ्य सेवाएँ—मातृ एवं शिशु स्वास्थ्य, सामान्य बीमारियाँ, गैर-संचारी रोग, आवश्यक दवाएँ और जाँच।',
+    eligibility: 'Services are offered through participating public primary-care facilities; the available package depends on the facility and state.',
+    eligibilityHi: 'सेवाएँ भाग लेने वाले सरकारी प्राथमिक स्वास्थ्य केंद्रों पर मिलती हैं; उपलब्ध सेवाएँ केंद्र और राज्य के अनुसार बदल सकती हैं।',
+    benefits: 'Access to a broad primary-care package and referrals, with essential drugs and diagnostics at participating facilities.',
+    benefitsHi: 'भाग लेने वाले केंद्रों पर व्यापक प्राथमिक उपचार, रेफ़रल, आवश्यक दवाएँ और जाँच।',
+    steps: 'Find or visit a nearby Ayushman Arogya Mandir and ask the facility team about the services available there.',
+    stepsHi: 'नज़दीकी आयुष्मान आरोग्य मंदिर जाएँ और वहाँ उपलब्ध सेवाओं के बारे में पूछें।',
+    url: 'https://aam.mohfw.gov.in/', source: 'https://aam.mohfw.gov.in/'
+  },
+  {
+    id: 'cghs', title: 'Central Government Health Scheme (CGHS)', titleHi: 'केंद्रीय सरकारी स्वास्थ्य योजना (CGHS)', scope: 'Central · eligible government employees and pensioners', category: 'Medical care',
+    summary: 'Healthcare facilities for eligible Central Government employees, pensioners and eligible dependants through CGHS wellness centres and empanelled providers.',
+    summaryHi: 'पात्र केंद्र सरकार कर्मचारियों, पेंशनभोगियों और आश्रितों के लिए CGHS वेलनेस केंद्रों और सूचीबद्ध सेवा प्रदाताओं के माध्यम से स्वास्थ्य सेवाएँ।',
+    eligibility: 'Eligibility is limited to notified beneficiary groups and covered locations; confirm your category and city on the CGHS portal.',
+    eligibilityHi: 'पात्रता अधिसूचित लाभार्थी समूहों और उपलब्ध शहरों तक सीमित है; CGHS पोर्टल पर अपनी श्रेणी और शहर जाँचें।',
+    benefits: 'Services and reimbursement/cashless rules as specified by CGHS for the beneficiary category.',
+    benefitsHi: 'लाभार्थी श्रेणी के लिए CGHS नियमों के अनुसार उपचार और प्रतिपूर्ति/कैशलेस सेवाएँ।',
+    steps: 'Use the official CGHS portal to check eligibility, apply for a card, find wellness centres and review current rules.',
+    stepsHi: 'पात्रता जाँचने, कार्ड के लिए आवेदन करने, वेलनेस केंद्र खोजने और वर्तमान नियम देखने के लिए CGHS पोर्टल खोलें।',
+    url: 'https://cghs.mohfw.gov.in/', source: 'https://cghs.mohfw.gov.in/'
+  },
+  {
+    id: 'esic', title: 'Employees’ State Insurance (ESI)', titleHi: 'कर्मचारी राज्य बीमा (ESI)', scope: 'Central · insured workers and eligible dependants', category: 'Medical and social security',
+    summary: 'Medical care and statutory cash benefits for insured employees and eligible dependants under the ESI system.',
+    summaryHi: 'ESI व्यवस्था के अंतर्गत बीमित कर्मचारियों और पात्र आश्रितों के लिए चिकित्सा और वैधानिक नकद लाभ।',
+    eligibility: 'Employees covered by the ESI Act at covered establishments who meet current wage and contribution rules; dependants are covered under applicable rules.',
+    eligibilityHi: 'ESI अधिनियम के दायरे वाले प्रतिष्ठानों के कर्मचारी, जो वर्तमान वेतन और अंशदान नियम पूरे करते हैं; लागू नियमों के अनुसार आश्रित भी पात्र हो सकते हैं।',
+    benefits: 'Medical attendance and treatment; eligible insured people may also receive sickness, maternity, disablement or dependant benefits under the Act.',
+    benefitsHi: 'चिकित्सा देखभाल और उपचार; पात्र बीमित व्यक्ति अधिनियम के तहत बीमारी, मातृत्व, दिव्यांगता या आश्रित लाभ भी पा सकते हैं।',
+    steps: 'Ask your employer for your insurance number and use the official ESIC portal to locate your dispensary, hospital or benefit information.',
+    stepsHi: 'नियोक्ता से बीमा संख्या लें और औषधालय, अस्पताल या लाभ की जानकारी के लिए आधिकारिक ESIC पोर्टल देखें।',
+    url: 'https://www.esic.gov.in/', source: 'https://esic.gov.in/attachments/publicationfile/4bba80675aa61f0e8c9f7f57c155b185.pdf'
+  },
+  {
+    id: 'jsy', title: 'Janani Suraksha Yojana (JSY)', titleHi: 'जननी सुरक्षा योजना (JSY)', scope: 'Centrally sponsored · state-specific eligibility rules', category: 'Maternal health',
+    summary: 'Promotes institutional delivery through conditional cash assistance and support linked to public health services.',
+    summaryHi: 'सार्वजनिक स्वास्थ्य सेवाओं से जुड़ी सशर्त नकद सहायता के माध्यम से संस्थागत प्रसव को प्रोत्साहन।',
+    eligibility: 'Eligibility and assistance vary by state category and beneficiary group. Confirm current rules with an ASHA worker or public health facility.',
+    eligibilityHi: 'पात्रता और सहायता राज्य श्रेणी तथा लाभार्थी समूह के अनुसार बदलती है। आशा कार्यकर्ता या सरकारी स्वास्थ्य केंद्र से वर्तमान नियम पूछें।',
+    benefits: 'Cash assistance for eligible institutional deliveries, with ASHA support as specified in state implementation rules.',
+    benefitsHi: 'राज्य के नियमों के अनुसार पात्र संस्थागत प्रसव के लिए नकद सहायता और आशा कार्यकर्ता का सहयोग।',
+    steps: 'Contact your ASHA worker or nearest government health centre during pregnancy to register and confirm documents and payment process.',
+    stepsHi: 'गर्भावस्था के दौरान पंजीकरण, दस्तावेज़ और भुगतान प्रक्रिया के लिए आशा कार्यकर्ता या नज़दीकी सरकारी स्वास्थ्य केंद्र से संपर्क करें।',
+    url: 'https://nhm.gov.in/index1.php?lang=1&level=3&sublinkid=841&lid=309', source: 'https://www.mohfw.gov.in/sites/default/files/03%20ChapterAN2018-19.pdf'
+  },
+  {
+    id: 'jssk', title: 'Janani Shishu Suraksha Karyakram (JSSK)', titleHi: 'जननी शिशु सुरक्षा कार्यक्रम (JSSK)', scope: 'Central programme · public health facilities', category: 'Maternal and newborn health',
+    summary: 'No-expense delivery and care entitlements for pregnant women and sick infants using public health institutions.',
+    summaryHi: 'सरकारी स्वास्थ्य संस्थानों में गर्भवती महिलाओं और बीमार शिशुओं के लिए निःशुल्क प्रसव और उपचार सुविधाएँ।',
+    eligibility: 'Pregnant women and sick newborns/infants accessing public health institutions, subject to programme guidelines.',
+    eligibilityHi: 'सरकारी स्वास्थ्य संस्थानों में आने वाली गर्भवती महिलाएँ और बीमार नवजात/शिशु, कार्यक्रम के नियमों के अधीन।',
+    benefits: 'Free delivery including C-section, medicines, diagnostics, diet during admission, blood if required and transport entitlements; sick infants also have free-care entitlements.',
+    benefitsHi: 'सिजेरियन सहित निःशुल्क प्रसव, दवाएँ, जाँच, भर्ती के दौरान भोजन, आवश्यकता पर रक्त और परिवहन; बीमार शिशुओं के लिए भी निःशुल्क उपचार सुविधाएँ।',
+    steps: 'Visit a government facility or ask an ASHA/ANM about JSSK entitlements and transport in your district.',
+    stepsHi: 'अपने ज़िले के JSSK लाभ और परिवहन के बारे में सरकारी स्वास्थ्य केंद्र या आशा/ANM से पूछें।',
+    url: 'https://www.nhm.gov.in/index4.php?lang=1&level=0&lid=171&linkid=150', source: 'https://www.nhm.gov.in/index4.php?lang=1&level=0&lid=171&linkid=150'
+  },
+  {
+    id: 'suman', title: 'Surakshit Matritva Aashwasan (SUMAN)', titleHi: 'सुरक्षित मातृत्व आश्वासन (SUMAN)', scope: 'Central initiative · public health facilities', category: 'Maternal and newborn health',
+    summary: 'Assured, dignified and no-cost maternal and newborn healthcare at participating public health facilities.',
+    summaryHi: 'भाग लेने वाले सरकारी स्वास्थ्य केंद्रों पर मातृ और नवजात स्वास्थ्य सेवाओं का सम्मानजनक, सुनिश्चित और निःशुल्क प्रावधान।',
+    eligibility: 'Pregnant women and newborns visiting public health facilities.',
+    eligibilityHi: 'सरकारी स्वास्थ्य केंद्रों पर आने वाली गर्भवती महिलाएँ और नवजात शिशु।',
+    benefits: 'Includes antenatal and postnatal care, management of complications, newborn care, referral and transport provisions under the service charter.',
+    benefitsHi: 'सेवा चार्टर के अनुसार प्रसव-पूर्व/बाद की देखभाल, जटिलताओं का उपचार, नवजात देखभाल, रेफ़रल और परिवहन सुविधाएँ।',
+    steps: 'Ask at a public health facility or use the official SUMAN portal and helpline for service or grievance guidance.',
+    stepsHi: 'सेवा या शिकायत मार्गदर्शन के लिए सरकारी स्वास्थ्य केंद्र या आधिकारिक SUMAN पोर्टल/हेल्पलाइन से संपर्क करें।',
+    url: 'https://www.suman.mohfw.gov.in/', source: 'https://www.suman.mohfw.gov.in/'
+  },
+  {
+    id: 'pmsma', title: 'Pradhan Mantri Surakshit Matritva Abhiyan (PMSMA)', titleHi: 'प्रधानमंत्री सुरक्षित मातृत्व अभियान (PMSMA)', scope: 'Central programme · designated facilities', category: 'Antenatal care',
+    summary: 'Free assured antenatal check-ups for pregnant women in the second and third trimester at designated facilities, especially on the 9th of each month.',
+    summaryHi: 'निर्धारित केंद्रों पर गर्भावस्था की दूसरी और तीसरी तिमाही में निःशुल्क प्रसव-पूर्व जाँच, विशेष रूप से हर महीने की 9 तारीख को।',
+    eligibility: 'Pregnant women in the second or third trimester; confirm the participating facility and date locally.',
+    eligibilityHi: 'गर्भावस्था की दूसरी या तीसरी तिमाही की महिलाएँ; भाग लेने वाला केंद्र और तारीख स्थानीय स्तर पर जाँचें।',
+    benefits: 'A minimum package of antenatal care, including check-up by an OBGY specialist/physician where available.',
+    benefitsHi: 'प्रसव-पूर्व जाँच की न्यूनतम सेवाएँ; उपलब्धता के अनुसार स्त्री-रोग विशेषज्ञ/चिकित्सक से जाँच।',
+    steps: 'Visit a designated government health facility on the 9th or ask the local facility when PMSMA services are next available.',
+    stepsHi: '9 तारीख को निर्धारित सरकारी स्वास्थ्य केंद्र जाएँ या स्थानीय केंद्र से अगली PMSMA सेवा की तारीख पूछें।',
+    url: 'https://pmsma.mohfw.gov.in/', source: 'https://pmsma.mohfw.gov.in/'
+  },
+  {
+    id: 'pmbjp', title: 'Pradhan Mantri Bhartiya Janaushadhi Pariyojana (PMBJP)', titleHi: 'प्रधानमंत्री भारतीय जनऔषधि परियोजना (PMBJP)', scope: 'Central · Janaushadhi Kendras across India', category: 'Affordable medicines',
+    summary: 'Makes quality-assured generic medicines and selected surgical items available through Janaushadhi Kendras at affordable prices.',
+    summaryHi: 'जनऔषधि केंद्रों के माध्यम से गुणवत्ता-जाँची जेनेरिक दवाएँ और कुछ सर्जिकल सामग्री किफ़ायती दाम पर उपलब्ध कराना।',
+    eligibility: 'Medicines are available to the public; product availability varies by Kendra and stock.',
+    eligibilityHi: 'दवाएँ आम जनता के लिए उपलब्ध हैं; उत्पादों की उपलब्धता केंद्र और स्टॉक के अनुसार बदलती है।',
+    benefits: 'Lower-cost generic alternatives and a locator for nearby Kendras; take medicines only as prescribed by a qualified clinician.',
+    benefitsHi: 'कम कीमत वाले जेनेरिक विकल्प और नज़दीकी केंद्र खोजने की सुविधा; दवा केवल योग्य चिकित्सक की सलाह पर लें।',
+    steps: 'Search for a nearby Kendra on the official portal/app and ask the pharmacist about the prescribed generic medicine and stock.',
+    stepsHi: 'आधिकारिक पोर्टल/ऐप पर नज़दीकी केंद्र खोजें और निर्धारित जेनेरिक दवा व स्टॉक के बारे में पूछें।',
+    url: 'https://janaushadhi.gov.in/about-pmbjb', source: 'https://janaushadhi.gov.in/about-pmbjb'
+  },
+  {
+    id: 'pmndp', title: 'Pradhan Mantri National Dialysis Programme (PMNDP)', titleHi: 'प्रधानमंत्री राष्ट्रीय डायलिसिस कार्यक्रम (PMNDP)', scope: 'National Health Mission · participating districts', category: 'Dialysis',
+    summary: 'Supports access to dialysis services, including free dialysis for poor patients at participating district hospitals.',
+    summaryHi: 'भाग लेने वाले ज़िला अस्पतालों में गरीब मरीजों के लिए निःशुल्क डायलिसिस सहित डायलिसिस सेवाओं तक पहुँच।',
+    eligibility: 'Poor patients and other beneficiaries as defined by the local programme; service availability depends on the state/district centre.',
+    eligibilityHi: 'स्थानीय कार्यक्रम में परिभाषित गरीब मरीज और अन्य लाभार्थी; सेवा राज्य/ज़िले के केंद्र पर निर्भर है।',
+    benefits: 'Haemodialysis and, where provided, peritoneal dialysis at programme centres.',
+    benefitsHi: 'कार्यक्रम केंद्रों पर हीमोडायलिसिस और जहाँ उपलब्ध हो, पेरिटोनियल डायलिसिस।',
+    steps: 'Ask the nephrology/district hospital team whether its dialysis centre participates and what documents or charges apply to your category.',
+    stepsHi: 'नेफ्रोलॉजी/ज़िला अस्पताल से पूछें कि डायलिसिस केंद्र कार्यक्रम में शामिल है या नहीं और आपकी श्रेणी के लिए कौन से दस्तावेज़/शुल्क लागू हैं।',
+    url: 'https://pmndp.mohfw.gov.in/en', source: 'https://pmndp.mohfw.gov.in/en'
+  },
+  {
+    id: 'nikshay-poshan', title: 'Ni-kshay Poshan Yojana', titleHi: 'निक्षय पोषण योजना', scope: 'National TB Elimination Programme', category: 'TB patient support',
+    summary: 'Direct benefit transfer nutritional support for notified tuberculosis patients during treatment.',
+    summaryHi: 'उपचार अवधि में अधिसूचित टीबी मरीजों के लिए पोषण सहायता का प्रत्यक्ष लाभ अंतरण।',
+    eligibility: 'TB patients notified/registered in the Ni-kshay system, subject to current programme rules and account requirements.',
+    eligibilityHi: 'निक्षय प्रणाली में अधिसूचित/पंजीकृत टीबी मरीज, वर्तमान कार्यक्रम और बैंक खाते के नियमों के अधीन।',
+    benefits: '₹1,000 per month per patient for the duration of treatment under the current announced rate; verify the current process with the TB unit.',
+    benefitsHi: 'वर्तमान घोषित दर के अनुसार उपचार अवधि में प्रति मरीज ₹1,000 प्रति माह; प्रक्रिया टीबी यूनिट से जाँचें।',
+    steps: 'Register with a public or notified TB treatment provider; ask the TB health visitor/medical officer to verify Ni-kshay notification and DBT details.',
+    stepsHi: 'सरकारी या अधिसूचित टीबी उपचार केंद्र में पंजीकरण करें; निक्षय प्रविष्टि और DBT जानकारी टीबी स्वास्थ्यकर्मी/चिकित्सा अधिकारी से जाँचें।',
+    url: 'https://nikshay.in/', source: 'https://www.pib.gov.in/PressReleasePage.aspx?PRID=2062928'
+  },
+  {
+    id: 'ran-hmdg', title: 'Rashtriya Arogya Nidhi (RAN) and HMDG', titleHi: 'राष्ट्रीय आरोग्य निधि (RAN) और HMDG', scope: 'Central · specified cases at government hospitals', category: 'Financial medical assistance',
+    summary: 'Financial assistance may be available for eligible indigent patients needing treatment for specified life-threatening diseases in government hospitals.',
+    summaryHi: 'सरकारी अस्पतालों में निर्दिष्ट जीवन-घातक बीमारी के उपचार की आवश्यकता वाले पात्र निर्धन मरीजों को वित्तीय सहायता मिल सकती है।',
+    eligibility: 'Income, disease, hospital, documents and assistance limits are governed by current RAN/HMDG guidelines; not every treatment or applicant qualifies.',
+    eligibilityHi: 'आय, बीमारी, अस्पताल, दस्तावेज़ और सहायता सीमा वर्तमान RAN/HMDG दिशानिर्देशों से तय होती है; हर उपचार या आवेदक पात्र नहीं होता।',
+    benefits: 'Case-based assistance under applicable RAN components, including cancer and specified rare-disease support; approval is not automatic.',
+    benefitsHi: 'लागू RAN घटकों के तहत मामले के आधार पर सहायता, जिसमें कैंसर और निर्दिष्ट दुर्लभ रोग सहायता शामिल हो सकती है; स्वीकृति स्वतः नहीं मिलती।',
+    steps: 'Contact the medical superintendent/social-work department of the treating government hospital for the latest application form and required certificates.',
+    stepsHi: 'नवीनतम आवेदन और प्रमाणपत्रों के लिए इलाज कर रहे सरकारी अस्पताल के चिकित्सा अधीक्षक/सामाजिक कार्य विभाग से संपर्क करें।',
+    url: 'https://mohfw.gov.in/sites/default/files/RAN_Guideline_2019_0.pdf', source: 'https://mohfw.gov.in/sites/default/files/RAN_Guideline_2019_0.pdf'
+  },
+];

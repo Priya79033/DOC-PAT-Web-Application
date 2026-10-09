@@ -1,11 +1,16 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { Routes, Route, Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { dict } from './i18n.js';
-import { voiceRoute } from './voice.js';
+import { voiceRoute, voiceQuery } from './voice.js';
 import { api, cachedGet, queuedPost, pendingCount, flush } from './api.js';
 
 const Ctx = createContext();
 const useApp = () => useContext(Ctx);
+const clearOfflineSnapshot = (user) => {
+  localStorage.removeItem('healthconnect:offline-user');
+  const id = user?._id || user?.id;
+  if (id) localStorage.removeItem(`healthconnect:records:${id}`);
+};
 
 function Provider({ children }) {
   const [user, setUser] = useState(null), [ready, setReady] = useState(false), [lang, setLang] = useState(localStorage.lang || 'en');
@@ -13,7 +18,18 @@ function Provider({ children }) {
   const t = (k) => dict[lang][k] || dict.en[k] || k;
   const refresh = useCallback(() => pendingCount().then(setPending), []);
   const sync = useCallback(async () => { await flush(); refresh(); }, [refresh]);
-  useEffect(() => { api('/auth/me').then(setUser).catch(() => {}).finally(() => setReady(true)); refresh(); }, [refresh]);
+  useEffect(() => {
+    api('/auth/me').then((activeUser) => {
+      const currentUser = { ...activeUser, _id: activeUser.id || activeUser._id };
+      setUser(currentUser);
+      localStorage.setItem('healthconnect:offline-user', JSON.stringify({ _id: currentUser._id, name: currentUser.name, role: currentUser.role }));
+    }).catch(() => {
+      if (!navigator.onLine) { try { setUser(JSON.parse(localStorage.getItem('healthconnect:offline-user') || 'null')); } catch { /* invalid local snapshot */ } }
+      else localStorage.removeItem('healthconnect:offline-user');
+    }).finally(() => setReady(true));
+    refresh();
+  }, [refresh]);
+  useEffect(() => { if (user) localStorage.setItem('healthconnect:offline-user', JSON.stringify({ _id: user._id || user.id, name: user.name, role: user.role })); }, [user]);
   useEffect(() => {
     const on = () => { setOnline(true); sync(); }, off = () => setOnline(false), msg = (e) => e.data === 'sync' && sync();
     addEventListener('online', on); addEventListener('offline', off); navigator.serviceWorker?.addEventListener('message', msg);
@@ -26,50 +42,61 @@ function Provider({ children }) {
 const Guard = ({ roles, children }) => { const { user, ready } = useApp(); if (!ready) return <p>…</p>; if (!user) return <Navigate to="/login" />; if (roles && !roles.includes(user.role) && user.role !== 'SUPER_ADMIN') return <Navigate to="/" />; return children; };
 
 function Layout({ children }) {
-  const { user, setUser, t, lang, setLang, low, setLow, online, pending } = useApp(), nav = useNavigate();
+  const { user, setUser, t, lang, setLang, low, setLow, online, pending } = useApp(), nav = useNavigate(), [accountOpen, setAccountOpen] = useState(false);
   return <>
     {!online && <div className="banner" role="status">{t('offline')}</div>}
     {pending > 0 && <div className="banner" role="status">{t('pending')} ({pending})</div>}
     <header className="top"><b>HealthConnect</b>
-      <nav><Link to="/">{t('home')}</Link><Link to="/help">{t('help')}</Link><Link to="/schemes">Schemes</Link><Link to="/complaints">{t('complaints')}</Link>{user?.role === 'DOCTOR' && <Link to="/doctor">Dashboard</Link>}{user?.role === 'HOSPITAL_ADMIN' && <Link to="/hospital">Dashboard</Link>}{user?.role === 'PATIENT' && <Link to="/appointments">Appointments</Link>}{user && <><Link to="/settings">Settings</Link><Link to="/saved">Saved</Link><Link to="/notifications">Alerts</Link></>}<Link to="/place">Area</Link><Link to="/offline-data">Offline</Link>{user && ['GOVERNMENT_ADMIN', 'SUPER_ADMIN'].includes(user.role) && <Link to="/admin">{t('admin')}</Link>}</nav>
+      <nav><Link to="/">{t('home')}</Link><Link to="/roles">{t('roles')}</Link><Link to="/help">{t('help')}</Link><Link to="/schemes">{t('schemes')}</Link><Link to="/complaints">{t('complaints')}</Link>{user?.role === 'DOCTOR' && <Link to="/doctor">{lang === 'hi' ? 'डैशबोर्ड' : 'Dashboard'}</Link>}{user?.role === 'AMBULANCE_DRIVER' && <Link to="/driver">{lang === 'hi' ? 'चालक GPS' : 'Driver GPS'}</Link>}{user?.role === 'HOSPITAL_ADMIN' && <><Link to="/hospital">{lang === 'hi' ? 'डैशबोर्ड' : 'Dashboard'}</Link><Link to="/admin/fleet">{lang === 'hi' ? 'वाहन' : 'Fleet'}</Link></>}{user?.role === 'PATIENT' && <Link to="/appointments">{t('appointments')}</Link>}{user && <Link to="/ambulance-tracking">{lang === 'hi' ? 'लाइव वाहन' : 'Live fleet'}</Link>}{user && user.role !== 'AMBULANCE_DRIVER' && <><Link to="/identity">{lang === 'hi' ? 'पहचान' : 'Identity'}</Link><Link to="/settings">{t('settings')}</Link><Link to="/saved">{t('saved')}</Link><Link to="/notifications">{t('notifications')}</Link></>}{user?.role === 'AMBULANCE_DRIVER' && <><Link to="/settings">{t('settings')}</Link><Link to="/notifications">{t('notifications')}</Link></>}<Link to="/place">{t('area')}</Link><Link to="/offline-data">{t('offlinePage')}</Link>{user && ['GOVERNMENT_ADMIN', 'SUPER_ADMIN'].includes(user.role) && <><Link to="/admin">{t('admin')}</Link><Link to="/admin/fleet">{lang === 'hi' ? 'वाहन' : 'Fleet'}</Link></>}</nav>
       <VoiceButton /><select aria-label="Language" value={lang} onChange={(e) => setLang(e.target.value)} style={{ width: 'auto' }}><option value="en">English</option><option value="hi">हिन्दी</option></select>
       <label style={{ margin: 0, display: 'flex', gap: '.3rem', alignItems: 'center' }}><input type="checkbox" style={{ width: 'auto' }} checked={low} onChange={(e) => setLow(e.target.checked)} />{t('lowdata')}</label>
-      {user ? <button className="b" onClick={async () => { await api('/auth/logout', { method: 'POST' }); setUser(null); nav('/'); }}>{t('logout')}</button> : <Link to="/login">{t('login')}</Link>}
-    </header><main>{children}</main><footer style={{ maxWidth: '64rem', margin: '0 auto', padding: '1rem' }}><nav className="row"><Link to="/about">About</Link><Link to="/how-it-works">How it works</Link><Link to="/emergency-info">Emergency information</Link><Link to="/services">Services</Link></nav><p className="stale">HealthConnect gives information to help you find care. It does not diagnose or prescribe. In an emergency call 108 or 112.</p></footer></>;
+      {user ? <div className="account-menu"><button type="button" className="account-avatar" aria-label={lang === 'hi' ? 'खाता मेनू खोलें' : 'Open account menu'} aria-expanded={accountOpen} onClick={() => setAccountOpen((open) => !open)}>{user.name?.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'U'}</button>{accountOpen && <div className="account-popover"><div className="account-summary"><span className="account-avatar account-avatar-large">{user.name?.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'U'}</span><div><b>{user.name}</b><small>{user.role?.replaceAll('_', ' ').toLowerCase()}</small></div></div><div className="account-links"><Link onClick={() => setAccountOpen(false)} to="/profile">♙ <span>{lang === 'hi' ? 'प्रोफ़ाइल' : 'Profile'}</span></Link>{user.role === 'PATIENT' && <Link onClick={() => setAccountOpen(false)} to="/appointments">▣ <span>{t('appointments')}</span></Link>}<Link onClick={() => setAccountOpen(false)} to="/saved">☆ <span>{t('saved')}</span></Link><Link onClick={() => setAccountOpen(false)} to="/settings">⚙ <span>{t('settings')}</span></Link></div><button className="account-signout" onClick={async () => { await api('/auth/logout', { method: 'POST' }); clearOfflineSnapshot(user); setUser(null); setAccountOpen(false); nav('/'); }}>{t('logout')}</button></div>}</div> : <Link to="/login">{t('login')}</Link>}
+    </header><main>{children}</main><footer style={{ maxWidth: '64rem', margin: '0 auto', padding: '1rem' }}><nav className="row"><Link to="/about">{lang === 'hi' ? 'परिचय' : 'About'}</Link><Link to="/how-it-works">{lang === 'hi' ? 'कैसे काम करता है' : 'How it works'}</Link><Link to="/emergency-info">{lang === 'hi' ? 'आपातकालीन जानकारी' : 'Emergency information'}</Link><Link to="/services">{lang === 'hi' ? 'सेवाएँ' : 'Services'}</Link></nav><p className="stale">{lang === 'hi' ? 'HealthConnect देखभाल खोजने के लिए जानकारी देता है। यह बीमारी का निदान या उपचार नहीं करता। आपातकाल में 108 या 112 पर कॉल करें।' : 'HealthConnect gives information to help you find care. It does not diagnose or prescribe. In an emergency call 108 or 112.'}</p></footer></>;
 }
 
 const Freshness = ({ at, fromCache }) => { const { t } = useApp(); const old = fromCache || Date.now() - new Date(at) > 6 * 36e5; return <span className={old ? 'stale' : ''}>{t('updated')}: {new Date(at).toLocaleString()}{old && ` — ${t('stale')}`}</span>; };
 const locate = () => new Promise((res) => navigator.geolocation ? navigator.geolocation.getCurrentPosition((p) => res({ lat: p.coords.latitude, lng: p.coords.longitude }), () => res(null), { timeout: 8000 }) : res(null));
 
 function Home() {
-  const { t } = useApp();
+  const { t, lang } = useApp();
   return <div className="home-page">
     <section className="hero">
       <div className="hero-copy">
-        <span className="eyebrow"><span className="eyebrow-dot" /> Trusted support for families</span>
-        <h1>Healthcare services<br className="desktop-break" /> designed around<br className="desktop-break" /> your care.</h1>
-        <p>Find expert doctors, compare hospitals, and explore government health schemes with a simple patient-first platform built for faster, safer care.</p>
-        <div className="hero-actions"><Link className="b hero-primary" to="/doctors">Find a doctor</Link><Link className="hero-secondary" to="/hospitals">View hospitals</Link></div>
-        <div className="hero-stats"><div><strong>1.2k+</strong><span>Verified doctors</span></div><div><strong>240+</strong><span>Hospitals</span></div><div><strong>96%</strong><span>Patient satisfaction</span></div></div>
+        <span className="eyebrow"><span className="eyebrow-dot" /> {lang === 'hi' ? 'परिवारों के लिए भरोसेमंद स्वास्थ्य सहायता' : 'Trusted support for families'}</span>
+        <h1>{lang === 'hi' ? <>आपकी देखभाल के लिए<br className="desktop-break" /> स्वास्थ्य सेवाएँ</> : <>Healthcare services<br className="desktop-break" /> designed around<br className="desktop-break" /> your care.</>}</h1>
+        <p>{lang === 'hi' ? 'डॉक्टर खोजें, अस्पतालों की तुलना करें और सरकारी स्वास्थ्य योजनाएँ देखें।' : 'Find expert doctors, compare hospitals, and explore government health schemes with a simple patient-first platform built for faster, safer care.'}</p>
+        <div className="hero-actions"><Link className="b hero-primary" to="/doctors">{lang === 'hi' ? 'डॉक्टर खोजें' : 'Find a doctor'}</Link><Link className="hero-secondary" to="/hospitals">{lang === 'hi' ? 'अस्पताल देखें' : 'View hospitals'}</Link></div>
+        <div className="hero-stats"><div><strong>1.2k+</strong><span>{lang === 'hi' ? 'सत्यापित डॉक्टर' : 'Verified doctors'}</span></div><div><strong>240+</strong><span>{lang === 'hi' ? 'अस्पताल' : 'Hospitals'}</span></div><div><strong>96%</strong><span>{lang === 'hi' ? 'मरीजों की संतुष्टि' : 'Patient satisfaction'}</span></div></div>
       </div>
       <aside className="hero-panel" aria-label="Care highlights">
         <article className="doctor-highlight"><div className="doctor-avatar">AS</div><div className="doctor-meta"><strong>Dr. Aisha Sharma</strong><span>Cardiologist · 14 years</span></div><div className="doctor-rating"><span aria-label="5 stars">★★★★★</span><span>4.9 rating</span><span className="case-count">3,200+ cases</span></div></article>
-        <article className="availability-card"><div className="availability-heading"><strong>Hospital availability</strong><span>Today</span></div><div><span>Private hospitals</span><b>18 available</b></div><div><span>Government hospitals</span><b>24 available</b></div><div><span>ICU / beds</span><b>128 open</b></div></article>
+        <article className="availability-card"><div className="availability-heading"><strong>{lang === 'hi' ? 'अस्पताल उपलब्धता' : 'Hospital availability'}</strong><span>{lang === 'hi' ? 'आज' : 'Today'}</span></div><div><span>{t('privateHospitals')}</span><b>{lang === 'hi' ? '18 उपलब्ध' : '18 available'}</b></div><div><span>{t('governmentHospitals')}</span><b>{lang === 'hi' ? '24 उपलब्ध' : '24 available'}</b></div><div><span>{lang === 'hi' ? 'ICU / बेड' : 'ICU / beds'}</span><b>{lang === 'hi' ? '128 खाली' : '128 open'}</b></div></article>
       </aside>
     </section>
-    <section className="quick-section"><div className="section-heading"><div><span className="section-kicker">HERE WHEN YOU NEED US</span><h2>Find the care you need</h2></div><Link to="/help">Explore all services <span aria-hidden="true">→</span></Link></div>
+    <section className="quick-section"><div className="section-heading"><div><span className="section-kicker">{lang === 'hi' ? 'ज़रूरत के समय मदद' : 'HERE WHEN YOU NEED US'}</span><h2>{lang === 'hi' ? 'अपनी ज़रूरत की सेवा खोजें' : 'Find the care you need'}</h2></div><Link to="/help">{lang === 'hi' ? 'सभी सेवाएँ देखें' : 'Explore all services'} <span aria-hidden="true">→</span></Link></div>
       <div className="quick-grid">
-        <Link className="quick-card quick-emergency" to="/emergency"><span className="quick-icon">✚</span><span><strong>{t('emergency')}</strong><small>Get urgent help nearby</small></span><span className="quick-arrow">↗</span></Link>
-        <Link className="quick-card" to="/doctors"><span className="quick-icon">＋</span><span><strong>{t('doctor')}</strong><small>Browse verified specialists</small></span><span className="quick-arrow">↗</span></Link>
-        <Link className="quick-card" to="/hospitals"><span className="quick-icon">⌂</span><span><strong>{t('hospital')}</strong><small>Compare local facilities</small></span><span className="quick-arrow">↗</span></Link>
-        <Link className="quick-card" to="/hospitals?beds=true"><span className="quick-icon">♡</span><span><strong>{t('bed')}</strong><small>Check available beds</small></span><span className="quick-arrow">↗</span></Link>
-        <Link className="quick-card" to="/blood"><span className="quick-icon">滴</span><span><strong>{t('blood')}</strong><small>Find blood banks</small></span><span className="quick-arrow">↗</span></Link>
-        <Link className="quick-card" to="/ambulance"><span className="quick-icon">＋</span><span><strong>{t('ambulance')}</strong><small>Locate an ambulance</small></span><span className="quick-arrow">↗</span></Link>
-        <Link className="quick-card" to="/schemes"><span className="quick-icon">◈</span><span><strong>Health schemes</strong><small>Explore public support</small></span><span className="quick-arrow">↗</span></Link>
-        <Link className="quick-card" to="/complaints"><span className="quick-icon">☷</span><span><strong>{t('report')}</strong><small>Share a care concern</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card quick-emergency" to="/emergency"><span className="quick-icon">✚</span><span><strong>{t('emergency')}</strong><small>{lang === 'hi' ? 'पास में तुरंत मदद पाएँ' : 'Get urgent help nearby'}</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/doctors"><span className="quick-icon">＋</span><span><strong>{t('doctor')}</strong><small>{lang === 'hi' ? 'विशेषज्ञ डॉक्टर देखें' : 'Browse verified specialists'}</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/hospitals"><span className="quick-icon">⌂</span><span><strong>{t('hospital')}</strong><small>{lang === 'hi' ? 'स्थानीय अस्पतालों की तुलना करें' : 'Compare local facilities'}</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/hospitals?beds=true"><span className="quick-icon">♡</span><span><strong>{t('bed')}</strong><small>{lang === 'hi' ? 'खाली बेड देखें' : 'Check available beds'}</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/blood"><span className="quick-icon">滴</span><span><strong>{t('blood')}</strong><small>{lang === 'hi' ? 'ब्लड बैंक खोजें' : 'Find blood banks'}</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/ambulance"><span className="quick-icon">＋</span><span><strong>{t('ambulance')}</strong><small>{lang === 'hi' ? 'एम्बुलेंस का पता लगाएँ' : 'Locate an ambulance'}</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/schemes"><span className="quick-icon">◈</span><span><strong>{lang === 'hi' ? 'स्वास्थ्य योजनाएँ' : 'Health schemes'}</strong><small>{lang === 'hi' ? 'सरकारी सहायता देखें' : 'Explore public support'}</small></span><span className="quick-arrow">↗</span></Link>
+        <Link className="quick-card" to="/complaints"><span className="quick-icon">☷</span><span><strong>{t('report')}</strong><small>{lang === 'hi' ? 'देखभाल से जुड़ी समस्या बताएँ' : 'Share a care concern'}</small></span><span className="quick-arrow">↗</span></Link>
       </div>
     </section>
   </div>;
+}
+
+function Roles() {
+  const roles = [
+    ['PATIENT / USER', 'Search care, request emergency help, book appointments, send complaints, save facilities and receive notifications.'],
+    ['DOCTOR', 'Manage a professional profile, availability, appointments, patient communication and feedback. Verification is required before a verified badge.'],
+    ['HOSPITAL ADMIN', 'Manage an assigned hospital profile, beds, services, declared prices and appointments. Hospital claims need government review.'],
+    ['GOVERNMENT / ADMIN', 'Review provider and identity checks, monitor complaints and pricing, publish schemes and inspect audit activity. Invitation required.'],
+    ['SUPER ADMIN', 'Manage system-level access and security. Account creation requires a super-admin invitation.'],
+  ];
+  return <><h2>System users &amp; roles</h2><p className="stale">Role-based access keeps each account’s tools scoped to its responsibilities.</p><div className="grid">{roles.map(([title, body]) => <article className="card" key={title}><h3>{title}</h3><p>{body}</p></article>)}</div><p className="card">For doctor, hospital-admin and invited administrator signups, Aadhaar, PAN and DigiLocker checks are queued. This demo does not connect to official verification providers. Use the Identity page to see review status.</p></>;
 }
 
 function Schemes() {
@@ -78,38 +105,71 @@ function Schemes() {
   return <><h2>Government healthcare schemes</h2><p className="card stale">Scheme information is demonstration data unless published by an authorized source. Check eligibility and details with the official program.</p>{error && <p className="err" role="alert">{error}</p>}{items.map((s) => <article className="card" key={s._id}><h3>{s.title}</h3>{s.region && <span className="tag">{s.region}</span>}<p>{s.body}</p></article>)}{!items.length && !error && <p>No schemes have been published yet.</p>}</>;
 }
 
-function HospitalList({ query, showAsk }) {
-  const { t } = useApp(), [state, setState] = useState(null), [err, setErr] = useState('');
+function HospitalList({ query, showAsk, splitTypes = false, mapSearch = '' }) {
+  const { t, lang, low } = useApp(), [state, setState] = useState(null), [err, setErr] = useState('');
   useEffect(() => { cachedGet('/hospitals?' + query).then(setState).catch((e) => setErr(e.message)); }, [query]);
   if (err) return <p className="err">{err}</p>; if (!state) return <p>…</p>; if (!state.data.length) return <p>No facilities found. Try a wider area.</p>;
-  return <>{state.fromCache && <p className="card stale">Availability could not be verified. Please contact the facility before travelling.</p>}{showAsk && <p>{t('matching')}</p>}{state.data.map((h) => <article className="card" key={h._id}>
+  const card = (h) => <article className="card" key={h._id}>
     <h3>{h.name}</h3><span className="tag">{h.verified ? t('verified') : t('unverified')}</span><span className="tag">{h.type}</span>{h.emergency && <span className="tag">Emergency</span>}
     <p>{h.area} {h.city}</p>
     <p>{Object.entries(h.beds || {}).map(([k, b]) => <span key={k} className={`tag ${b.status}`}>{k}: {b.status}</span>)}</p>
     <Freshness at={Object.values(h.beds || {})[0]?.updatedAt || Date.now()} fromCache={state.fromCache || h.bedsStale} />
     <div className="row" style={{ marginTop: '.5rem' }}>{(h.emergencyPhone || h.phone) && <a className="big" href={`tel:${h.emergencyPhone || h.phone}`}>{t('call')}</a>}
       <a className="big" href={`https://www.google.com/maps/dir/?api=1&destination=${h.location.coordinates[1]},${h.location.coordinates[0]}`} target="_blank" rel="noreferrer">{t('directions')}</a>
-      <Link className="big" to={`/hospitals/${h._id}`}>Details</Link><Link className="big" to={`/complaints?hospital=${h._id}`}>{t('report')}</Link></div></article>)}</>;
+      <Link className="big" to={`/hospitals/${h._id}`}>{t('detailsBook')}</Link><Link className="big" to={`/complaints?hospital=${h._id}`}>{t('report')}</Link></div></article>;
+  const government = state.data.filter((h) => h.type === 'GOVERNMENT'), privateHospitals = state.data.filter((h) => h.type === 'PRIVATE');
+  const mapUrl = mapSearch ? `https://maps.google.com/maps?q=${encodeURIComponent(`hospitals in ${mapSearch}`)}&z=12&output=embed` : '';
+  return <>{state.fromCache && <p className="card stale">{lang === 'hi' ? 'उपलब्धता की पुष्टि नहीं हो सकी। यात्रा से पहले अस्पताल को फोन करें।' : 'Availability could not be verified. Please contact the facility before travelling.'}</p>}{showAsk && <p>{t('matching')}</p>}{mapSearch && !low && <section className="card"><h3>{lang === 'hi' ? 'चुने गए क्षेत्र के अस्पतालों का नक्शा' : 'Hospitals on the map'}</h3><iframe title="Hospitals in selected area on Google Maps" src={mapUrl} loading="lazy" style={{ width: '100%', height: '300px', border: 0, borderRadius: '12px' }} /><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`hospitals in ${mapSearch}`)}`} target="_blank" rel="noreferrer">{lang === 'hi' ? 'Google Maps में खोलें' : 'Open in Google Maps'}</a></section>}{splitTypes ? <div className="hospital-columns"><section><h3>{t('governmentHospitals')} ({government.length})</h3>{government.map(card)}</section><section><h3>{t('privateHospitals')} ({privateHospitals.length})</h3>{privateHospitals.map(card)}</section></div> : state.data.map(card)}</>;
 }
 
 function Hospitals() {
-  const { t } = useApp(), [f, setF] = useState({ city: '', type: '', emergency: false, beds: new URLSearchParams(location.search).get('beds') === 'true', icu: false }), [pos, setPos] = useState(null);
-  const qs = new URLSearchParams({ ...(f.city && { city: f.city }), ...(f.type && { type: f.type }), ...(f.emergency && { emergency: true }), ...(f.beds && { beds: true }), ...(f.icu && { icu: true }), ...(pos || {}) }).toString();
+  const { t, low, lang } = useApp(), initialQuery = new URLSearchParams(location.search), [f, setF] = useState({ q: initialQuery.get('q') || '', city: initialQuery.get('city') || '', type: '', emergency: false, beds: initialQuery.get('beds') === 'true', icu: false }), [pos, setPos] = useState(null), [locMsg, setLocMsg] = useState('');
+  useEffect(() => { const onVoice = (event) => setF((current) => ({ ...current, q: event.detail || current.q })); addEventListener('healthconnect:voice-search', onVoice); return () => removeEventListener('healthconnect:voice-search', onVoice); }, []);
+  const qs = new URLSearchParams({ ...(f.q.trim() && { q: f.q.trim() }), ...(f.city && { city: f.city }), ...(f.type && { type: f.type }), ...(f.emergency && { emergency: true }), ...(f.beds && { beds: true }), ...(f.icu && { icu: true }), ...(pos || {}) }).toString();
+  const mapQuery = pos ? `${pos.lat},${pos.lng}` : (f.city || 'hospitals');
+  const mapUrl = `https://maps.google.com/maps?q=${encodeURIComponent(pos ? `hospitals near ${mapQuery}` : `${f.q || 'hospitals'} near ${mapQuery}`)}&z=13&output=embed`;
   return <><h2>{t('hospital')}</h2><div className="card"><div className="row">
-    <div><label htmlFor="c">City</label><input id="c" value={f.city} onChange={(e) => setF({ ...f, city: e.target.value })} /></div>
-    <div><label htmlFor="ty">Type</label><select id="ty" value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}><option value="">Any</option><option value="GOVERNMENT">Government</option><option value="PRIVATE">Private</option></select></div></div>
+    <div><label htmlFor="hospital-search">{t('searchHospital')}</label><input id="hospital-search" placeholder={lang === 'hi' ? 'नाम, शहर या सेवा लिखें' : 'Name, city, or service'} value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} /></div>
+    <div><label htmlFor="c">{t('city')}</label><input id="c" value={f.city} onChange={(e) => setF({ ...f, city: e.target.value })} /></div>
+    <div><label htmlFor="ty">{t('type')}</label><select id="ty" value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}><option value="">{t('any')}</option><option value="GOVERNMENT">{t('governmentHospitals')}</option><option value="PRIVATE">{t('privateHospitals')}</option></select></div></div>
     {[['emergency', 'Emergency'], ['beds', 'Beds available'], ['icu', 'ICU available']].map(([k, l]) => <label key={k}><input type="checkbox" style={{ width: 'auto' }} checked={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.checked })} /> {l}</label>)}
-    <button className="b" onClick={async () => setPos(await locate())}>{t('locate')}</button></div><HospitalList query={qs} /></>;
+    <button className="b" onClick={async () => { const p = await locate(); setPos(p); setLocMsg(p ? 'Showing hospitals near your current location.' : 'Could not access location. Allow location permission or search by city.'); }}>{t('locate')}</button>{pos && <button className="b" onClick={() => setPos(null)}>Clear location</button>}<p role="status">{locMsg}</p></div>
+    {!low && <section className="card"><h3>{pos ? 'Hospitals near you on Google Maps' : 'Google Maps'}</h3><iframe title="Google Maps hospital search" src={mapUrl} loading="lazy" referrerPolicy="no-referrer-when-downgrade" style={{ width: '100%', height: '320px', border: 0, borderRadius: '12px' }} /><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapQuery)}`} target="_blank" rel="noreferrer">Open in Google Maps</a></section>}<HospitalList query={qs} splitTypes={!f.type} /></>;
+}
+
+function EmergencyHelplines({ lang = 'en' }) {
+  const contacts = lang === 'hi' ? [
+    ['112', 'ऑल-इन-वन आपातकालीन नंबर', 'पुलिस, आग या एम्बुलेंस सहित आपातकालीन सहायता के लिए।'],
+    ['108', 'सरकारी एम्बुलेंस', 'गंभीर बीमारी, दुर्घटना या मेडिकल आपातकाल में। उपलब्धता राज्य के अनुसार हो सकती है।'],
+    ['102', 'माँ और नवजात शिशु परिवहन', 'गर्भवती महिलाओं और नवजात शिशुओं के अस्पताल आने-जाने के लिए सरकारी परिवहन सहायता।'],
+    ['104', 'स्वास्थ्य हेल्पलाइन', 'डॉक्टर की सलाह या ब्लड बैंक की जानकारी के लिए अपने राज्य में उपलब्ध सेवाएँ पूछें; सेवा राज्य के अनुसार बदलती है।'],
+    ['14416', 'Tele-MANAS मानसिक स्वास्थ्य सहायता', 'तनाव, चिंता या अवसाद में टेली-परामर्श सहायता।'],
+    ['1066', 'Apollo निजी एम्बुलेंस', 'Apollo की आपातकालीन एम्बुलेंस सेवा; उपलब्धता और शुल्क कॉल पर जाँचें।'],
+  ] : [
+    ['112', 'All-in-one emergency number', 'Call for police, fire or ambulance and other emergency assistance.'],
+    ['108', 'Government ambulance', 'For serious illness, accidents or medical emergencies. Availability can vary by state.'],
+    ['102', 'Maternal and newborn transport', 'Government transport support for pregnant women and newborns travelling to or from a hospital.'],
+    ['104', 'Health helpline', 'Ask about doctor advice or blood bank information where these state services are available. Services vary by state.'],
+    ['14416', 'Tele-MANAS mental health support', 'Telephone counselling support for stress, anxiety or depression.'],
+    ['1066', 'Apollo private ambulance', 'Apollo emergency ambulance service; confirm local availability and charges when calling.'],
+  ];
+  return <section className="card"><h3>{lang === 'hi' ? 'आपातकालीन हेल्पलाइन' : 'Emergency helplines'}</h3><div className="grid">{contacts.map(([number, title, detail]) => <article className="card" key={number}><h4>{title}</h4><p>{detail}</p><a className="big" href={`tel:${number}`}>{lang === 'hi' ? 'कॉल करें' : 'Call'} {number}</a></article>)}</div><p className="stale">{lang === 'hi' ? 'जान को तुरंत खतरा हो तो वेबसाइट का इंतज़ार न करें—112 या 108 पर कॉल करें।' : 'If someone is in immediate danger, do not wait for this website—call 112 or 108.'}</p></section>;
 }
 
 function Emergency() {
-  const { t } = useApp(), { user } = useApp(), [pos, setPos] = useState(undefined), [msg, setMsg] = useState('');
+  const { t, user, low, lang } = useApp(), [pos, setPos] = useState(undefined), [msg, setMsg] = useState(''), [tripId, setTripId] = useState(''), [trip, setTrip] = useState(null);
   useEffect(() => { locate().then(setPos); }, []);
+  useEffect(() => { if (user) api('/emergency/requests/mine').then((items) => { const active = items.find((x) => x.ambulance && ['DISPATCHED', 'ARRIVED'].includes(x.status)); if (active) setTripId(active._id); }).catch(() => {}); }, [user]);
+  useEffect(() => { if (!tripId) return; const load = () => api(`/emergency/requests/${tripId}`).then(setTrip).catch(() => {}); load(); const base = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, ''); const stream = new EventSource(`${base}/ambulances/stream`, { withCredentials: true }); stream.onmessage = load; const fallback = setInterval(load, 30000); return () => { stream.close(); clearInterval(fallback); }; }, [tripId]);
   const q = pos ? `emergency=true&lat=${pos.lat}&lng=${pos.lng}` : 'emergency=true';
-  const request = async () => { if (!pos) return setMsg('Location needed to send an ambulance request. Please call 108.'); const r = await queuedPost('/emergency/requests', { kind: 'AMBULANCE', ...pos }).catch((e) => ({ err: e.message })); setMsg(r.queued ? t('pending') : r.err || 'Request sent'); };
-  return <><h2>{t('emergency')}</h2><div className="grid"><a className="big sos" href="tel:108">{t('call')} 108</a><a className="big" href="tel:112">{t('call')} 112</a><a className="big" href="tel:102">{t('call')} 102</a>
+  const request = async () => { if (!pos) return setMsg('Location needed to send an ambulance request. Please call 108.'); const r = await queuedPost('/emergency/requests', { kind: 'AMBULANCE', ...pos }).catch((e) => ({ err: e.message })); const id = r._id || r.id; if (id) { setTripId(id); setMsg(r.ambulance ? 'An ambulance was assigned. Live location will refresh below.' : 'Request received; call 108 for immediate help.'); } else setMsg(r.queued ? t('pending') : r.err || 'Request sent'); };
+  const [lng, lat] = trip?.ambulance?.location?.coordinates || [];
+  const tripMap = lat && lng ? `https://www.openstreetmap.org/export/embed.html?bbox=${lng - .03}%2C${lat - .02}%2C${lng + .03}%2C${lat + .02}&layer=mapnik&marker=${lat}%2C${lng}` : '';
+  const tripMapLink = lat && lng ? `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=14/${lat}/${lng}` : '';
+  return <><h2>{t('emergency')}</h2><EmergencyHelplines lang={lang} /><div className="grid">
     {user && <button className="big" onClick={request}>{t('ambulance')}</button>}<Link className="big" to="/blood">{t('blood')}</Link></div>
     {msg && <p role="status" className="card">{msg}</p>}<h3>{t('nearest')}</h3>{pos === undefined ? <p>…</p> : <HospitalList query={q} />}
+    {trip?.ambulance && <section className="card"><h3>Assigned ambulance · {trip.ambulance.vehicleId}</h3><span className="tag">{trip.status}</span><p>{trip.ambulance.type} · {trip.ambulance.status} · {trip.ambulance.site?.name || 'En route'} · Last update {trip.ambulance.updatedAt ? new Date(trip.ambulance.updatedAt).toLocaleTimeString() : '—'}</p>{!low && tripMap && <iframe title="Live assigned ambulance location" src={tripMap} loading="lazy" style={{ width: '100%', height: '320px', border: 0, borderRadius: '12px' }} />}{low && tripMapLink && <a href={tripMapLink} target="_blank" rel="noreferrer">Open map only when needed</a>}</section>}
     <p className="card">This tool gives information only. It does not give medical advice.</p></>;
 }
 
@@ -199,7 +259,7 @@ function Guided() {
 }
 
 function Doctors() {
-  const [sp, setSp] = useState(''), [s, setS] = useState(null);
+  const [sp, setSp] = useState(new URLSearchParams(location.search).get('specialization') || ''), [s, setS] = useState(null);
   useEffect(() => { cachedGet('/doctors?specialization=' + encodeURIComponent(sp)).then(setS).catch(() => setS({ data: [] })); }, [sp]);
   const book = async (id) => { const when = prompt('Preferred date & time (YYYY-MM-DD HH:MM)'); if (when) { const r = await queuedPost('/appointments', { doctor: id, when: new Date(when).toISOString() }).catch((e) => alert(e.message)); r && alert(r.queued ? 'Saved. Will send when online.' : 'Requested'); } };
   return <><h2>Find doctor</h2><input aria-label="Specialization" placeholder="Specialization" value={sp} onChange={(e) => setSp(e.target.value)} />
@@ -207,16 +267,70 @@ function Doctors() {
 }
 
 function Auth({ mode }) {
-  const { setUser, t } = useApp(), nav = useNavigate(), [f, setF] = useState({ role: 'PATIENT' }), [err, setErr] = useState('');
-  const go = async (e) => { e.preventDefault(); try { const u = await api(mode === 'login' ? '/auth/login' : '/auth/register', { method: 'POST', body: mode === 'login' ? { identifier: f.identifier, password: f.password } : { name: f.name, [/@/.test(f.identifier) ? 'email' : 'phone']: f.identifier, password: f.password, role: f.role } }); setUser(u); nav('/'); } catch (x) { setErr(x.message); } };
-  return <form className="card" onSubmit={go}><h2>{mode === 'login' ? t('login') : t('register')}</h2>{mode === 'register' && <><label htmlFor="n">Name</label><input id="n" required onChange={(e) => setF({ ...f, name: e.target.value })} /><label htmlFor="r">I am a</label><select id="r" onChange={(e) => setF({ ...f, role: e.target.value })}><option value="PATIENT">Patient</option><option value="DOCTOR">Doctor</option><option value="HOSPITAL_ADMIN">Hospital staff</option></select></>}
+  const { setUser, t } = useApp(), nav = useNavigate(), [f, setF] = useState({ role: 'PATIENT' }), [err, setErr] = useState(''), [hospitals, setHospitals] = useState([]), googleButton = useRef(null), currentForm = useRef(f);
+  useEffect(() => { currentForm.current = f; }, [f]);
+  useEffect(() => {
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    if (!clientId || (mode === 'register' && f.role !== 'PATIENT')) return;
+    let active = true;
+    const mount = () => {
+      if (!active || !googleButton.current || !window.google?.accounts?.id) return false;
+      googleButton.current.replaceChildren();
+      window.google.accounts.id.initialize({ client_id: clientId, callback: async ({ credential }) => {
+        try { const v = currentForm.current, patientProfile = v.age !== undefined && v.gender ? { age: Number(v.age), gender: v.gender, ...(v.bloodGroup && { bloodGroup: v.bloodGroup }) } : undefined; const u = await api('/auth/google', { method: 'POST', body: { credential, ...(patientProfile && { patientProfile }) } }); setUser(u); nav('/'); }
+        catch (e) { setErr(e.message); }
+      } });
+      window.google.accounts.id.renderButton(googleButton.current, { type: 'standard', theme: 'outline', size: 'large', text: 'continue_with', shape: 'rectangular', width: 280 });
+      return true;
+    };
+    if (mount()) return () => { active = false; };
+    let script = document.querySelector('script[data-google-identity]');
+    if (!script) { script = document.createElement('script'); script.src = 'https://accounts.google.com/gsi/client'; script.async = true; script.defer = true; script.dataset.googleIdentity = 'true'; document.head.appendChild(script); }
+    script.addEventListener('load', mount); return () => { active = false; script.removeEventListener('load', mount); };
+  }, [mode, f.role]);
+  useEffect(() => { if (f.role === 'DOCTOR') api('/hospitals?limit=50').then((h) => setHospitals(h.filter((x) => x.verified))).catch(() => setHospitals([])); }, [f.role]);
+  const go = async (e) => { e.preventDefault(); try {
+    const registering = mode === 'register';
+    const body = !registering ? { identifier: f.identifier, password: f.password } : {
+      name: f.name, [/@/.test(f.identifier) ? 'email' : 'phone']: f.identifier, password: f.password, role: f.role, identityConsent: f.identityConsent === true,
+      ...(f.role === 'PATIENT' && { patientProfile: { age: Number(f.age), gender: f.gender, ...(f.bloodGroup && { bloodGroup: f.bloodGroup }) } }),
+      ...(f.role === 'AMBULANCE_DRIVER' && { driverProfile: { vehicleId: f.vehicleId, inviteToken: f.driverInviteToken } }),
+      ...(f.inviteToken && { inviteToken: f.inviteToken }),
+      ...(f.role === 'DOCTOR' && { doctorProfile: { qualification: f.qualification, specialization: f.specialization, licenseNo: f.licenseNo, experience: Number(f.experience), hospital: f.hospital, ...(f.fee && { fee: Number(f.fee) }) } }),
+      ...(f.role === 'HOSPITAL_ADMIN' && { hospitalProfile: { name: f.hospitalName, licenseNumber: f.licenseNumber, type: f.hospitalType, city: f.city, area: f.area, phone: f.hospitalPhone, lat: Number(f.lat), lng: Number(f.lng) } }),
+    };
+    const u = await api(registering ? '/auth/register' : '/auth/login', { method: 'POST', body }); setUser(u); nav(u.role === 'AMBULANCE_DRIVER' ? '/driver' : registering && u.role !== 'PATIENT' ? '/identity' : '/');
+  } catch (x) { setErr(x.message); } };
+  return <form className="card" onSubmit={go}><h2>{mode === 'login' ? t('login') : t('register')}</h2>{mode === 'register' && <><label htmlFor="n">Full legal name</label><input id="n" autoComplete="name" required onChange={(e) => setF({ ...f, name: e.target.value })} /><label htmlFor="r">Account role</label><select id="r" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}><option value="PATIENT">Patient / User</option><option value="DOCTOR">Doctor</option><option value="HOSPITAL_ADMIN">Hospital Admin</option><option value="AMBULANCE_DRIVER">Ambulance Driver (invitation required)</option><option value="GOVERNMENT_ADMIN">Government / Admin (invitation required)</option><option value="SUPER_ADMIN">Super Admin (invitation required)</option></select>
+    {f.role === 'PATIENT' && <fieldset><legend>Patient details</legend><label htmlFor="patientAge">Age</label><input id="patientAge" type="number" min="0" max="120" required onChange={(e) => setF({ ...f, age: e.target.value })} /><label htmlFor="patientGender">Gender</label><select id="patientGender" required onChange={(e) => setF({ ...f, gender: e.target.value })}><option value="">Choose</option><option value="FEMALE">Female</option><option value="MALE">Male</option><option value="OTHER">Other</option><option value="PREFER_NOT_TO_SAY">Prefer not to say</option></select><label htmlFor="bloodGroup">Blood group (optional)</label><select id="bloodGroup" onChange={(e) => setF({ ...f, bloodGroup: e.target.value })}><option value="">Not provided</option>{['A+','A-','B+','B-','AB+','AB-','O+','O-'].map((g) => <option key={g}>{g}</option>)}</select></fieldset>}
+    {f.role === 'AMBULANCE_DRIVER' && <fieldset><legend>Vehicle pairing</legend><label htmlFor="driverVehicle">Fleet ID provided by your dispatcher</label><input id="driverVehicle" required onChange={(e) => setF({ ...f, vehicleId: e.target.value })} /><label htmlFor="driverToken">One-time driver invitation code</label><input id="driverToken" required autoComplete="one-time-code" onChange={(e) => setF({ ...f, driverInviteToken: e.target.value })} /><p className="stale">Ask your hospital/dispatch admin for a vehicle pairing code before creating this account.</p></fieldset>}
+    {f.role === 'DOCTOR' && <fieldset><legend>Professional details</legend>{[['qualification', 'Medical qualification'], ['specialization', 'Specialization'], ['licenseNo', 'Medical registration / licence number']].map(([k, label]) => <div key={k}><label htmlFor={k}>{label}</label><input id={k} required onChange={(e) => setF({ ...f, [k]: e.target.value })} /></div>)}<label htmlFor="doctorHospital">Registered hospital</label><select id="doctorHospital" required value={f.hospital || ''} onChange={(e) => setF({ ...f, hospital: e.target.value })}><option value="">Choose an approved hospital</option>{hospitals.map((h) => <option key={h._id} value={h._id}>{h.name} · {h.city}</option>)}</select>{!hospitals.length && <p className="stale">No approved hospital is available yet. Hospital registration must be approved before doctor signup.</p>}<label htmlFor="experience">Years of experience</label><input id="experience" type="number" min="0" max="80" required onChange={(e) => setF({ ...f, experience: e.target.value })} /><label htmlFor="fee">Consultation fee (optional)</label><input id="fee" type="number" min="0" onChange={(e) => setF({ ...f, fee: e.target.value })} /></fieldset>}
+    {f.role === 'HOSPITAL_ADMIN' && <fieldset><legend>Hospital details</legend><label htmlFor="hospitalName">Hospital name</label><input id="hospitalName" required onChange={(e) => setF({ ...f, hospitalName: e.target.value })} /><label htmlFor="licenseNumber">Hospital license / registration number</label><input id="licenseNumber" required onChange={(e) => setF({ ...f, licenseNumber: e.target.value })} /><label htmlFor="hospitalType">Ownership</label><select id="hospitalType" value={f.hospitalType || 'PRIVATE'} onChange={(e) => setF({ ...f, hospitalType: e.target.value })}><option value="PRIVATE">Private</option><option value="GOVERNMENT">Government</option></select>{[['city', 'City'], ['area', 'Area / locality'], ['hospitalPhone', 'Hospital phone']].map(([k, label]) => <div key={k}><label htmlFor={k}>{label}</label><input id={k} required={k === 'city'} onChange={(e) => setF({ ...f, [k]: e.target.value })} /></div>)}<label htmlFor="lat">Hospital latitude</label><input id="lat" type="number" step="any" min="-90" max="90" required onChange={(e) => setF({ ...f, lat: e.target.value })} /><label htmlFor="lng">Hospital longitude</label><input id="lng" type="number" step="any" min="-180" max="180" required onChange={(e) => setF({ ...f, lng: e.target.value })} /></fieldset>}
+    {['DOCTOR', 'HOSPITAL_ADMIN', 'GOVERNMENT_ADMIN', 'SUPER_ADMIN'].includes(f.role) && <><p className="stale">Aadhaar, PAN and DigiLocker review status will be created with signup. This demo has no official provider connection; it will not ask you to enter identity numbers or transmit them. Identity checks do not replace your password for login.</p><label><input type="checkbox" required checked={f.identityConsent === true} onChange={(e) => setF({ ...f, identityConsent: e.target.checked })} /> I consent to creating an identity review request for this account. I understand a real provider would require a separate consent and verification step.</label></>}
+    {['GOVERNMENT_ADMIN', 'SUPER_ADMIN'].includes(f.role) && <><label htmlFor="invite">Administrator invitation code</label><input id="invite" required autoComplete="one-time-code" onChange={(e) => setF({ ...f, inviteToken: e.target.value })} /></>}</>}
     <label htmlFor="i">Email or phone</label><input id="i" required autoComplete="username" onChange={(e) => setF({ ...f, identifier: e.target.value })} /><label htmlFor="p">Password (8+ characters)</label><input id="p" type="password" minLength={8} required autoComplete="current-password" onChange={(e) => setF({ ...f, password: e.target.value })} />
-    {err && <p className="err" role="alert">{err}</p>}<button className="b">{t('submit')}</button>{mode === 'login' && <p><Link to="/register">{t('register')}</Link> · <Link to="/otp">Phone code</Link> · <Link to="/forgot">Forgot password?</Link></p>}</form>;
+    {err && <p className="err" role="alert">{err}</p>}<button className="b">{t('submit')}</button>{(mode === 'login' || f.role === 'PATIENT') && import.meta.env.VITE_GOOGLE_CLIENT_ID && <div className="card"><p>Or continue with Google</p><div ref={googleButton} /></div>}{mode === 'login' && <p><Link to="/register">{t('register')}</Link> · <Link to="/otp">Phone code</Link> · <Link to="/forgot">Forgot password?</Link></p>}</form>;
 }
 
-async function compress(file) { // low-data mode: shrink images before upload
-  if (!file.type.startsWith('image/')) return file; const bmp = await createImageBitmap(file), s = Math.min(1, 1280 / bmp.width), c = new OffscreenCanvas(bmp.width * s, bmp.height * s);
-  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); return new File([await c.convertToBlob({ type: 'image/jpeg', quality: 0.6 })], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' });
+async function compress(file) { // Low-data uploads use smaller JPEGs when the browser supports canvas compression.
+  if (!file.type.startsWith('image/')) return file;
+  try {
+    let canvas, width, height, draw;
+    if (typeof createImageBitmap === 'function') {
+      const bitmap = await createImageBitmap(file), scale = Math.min(1, 1280 / bitmap.width);
+      width = Math.round(bitmap.width * scale); height = Math.round(bitmap.height * scale);
+      if (typeof OffscreenCanvas === 'function') { canvas = new OffscreenCanvas(width, height); draw = (ctx) => ctx.drawImage(bitmap, 0, 0, width, height); }
+      else { canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height; draw = (ctx) => ctx.drawImage(bitmap, 0, 0, width, height); }
+    } else {
+      const url = URL.createObjectURL(file), image = new Image();
+      await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; image.src = url; });
+      const scale = Math.min(1, 1280 / image.naturalWidth); width = Math.round(image.naturalWidth * scale); height = Math.round(image.naturalHeight * scale);
+      canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height; draw = (ctx) => ctx.drawImage(image, 0, 0, width, height); URL.revokeObjectURL(url);
+    }
+    const ctx = canvas.getContext('2d'); draw(ctx);
+    const blob = canvas.convertToBlob ? await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.6 }) : await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.6));
+    return blob ? new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }) : file;
+  } catch { return file; }
 }
 function Complaints() {
   const { t, low } = useApp(), [list, setList] = useState([]), [msg, setMsg] = useState(''), [cats] = useState(['EXCESSIVE_CHARGE', 'UNEXPECTED_CHARGE', 'FACILITY_UNAVAILABLE', 'BED_ISSUE', 'DOCTOR', 'STAFF', 'EMERGENCY_SERVICE', 'AMBULANCE', 'BLOOD', 'INCORRECT_INFO', 'OTHER']);
@@ -249,14 +363,36 @@ function Admin() {
 }
 
 function Place() {
-  const [path, setPath] = useState([]), [items, setItems] = useState([]);
-  useEffect(() => { cachedGet('/locations?path=' + encodeURIComponent(path.join('>'))).then((s) => setItems(s.data.items)).catch(() => {}); }, [path]);
-  const labels = ['Continent', 'Country', 'State', 'City', 'Area'], last = path.length >= 5 || (path.length && !items.length);
-  return <><h2>Choose your area</h2><p className="stale">Sample location data for demonstration.</p><p>{path.join(' → ')}</p>
-    {!last ? <><label>{labels[path.length]}</label><div className="grid">{items.map((i) => <button className="big" key={i} onClick={() => setPath([...path, i])}>{i}</button>)}</div></> : <HospitalList query={`area=${encodeURIComponent(path[path.length - 1])}&city=${encodeURIComponent(path[path.length - 2] || '')}`} />}
-    {path.length > 0 && <button className="b" onClick={() => setPath(path.slice(0, -1))}>Back</button>}</>;
-}
-function Saved() {
+  const { lang } = useApp();
+  const labels = ['Continent', 'Country', 'State', 'City', 'Area'];
+  const fields = ['continent', 'country', 'state', 'city', 'area'];
+  const [selected, setSelected] = useState({}), [options, setOptions] = useState([[], [], [], [], []]);
+  useEffect(() => {
+    let active = true;
+    cachedGet('/locations?level=all').then((result) => {
+      if (active) setOptions(fields.map((field) => result.data.items[field] || []));
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [lang]);
+  const hasSelection = Object.values(selected).some(Boolean);
+  const query = new URLSearchParams();
+  if (selected.continent === 'Asia') query.set('country', 'India');
+  for (const field of ['country', 'state', 'city', 'area']) if (selected[field]) query.set(field, selected[field]);
+  const mapSearch = [selected.area, selected.city, selected.state, selected.country || (selected.continent ? 'India' : '')].filter(Boolean).join(', ');
+  return <><h2>{lang === 'hi' ? 'अपना क्षेत्र चुनें' : 'Choose your area'}</h2>
+    <p className="stale">{lang === 'hi' ? 'किसी भी एक dropdown को चुनें, उसी के अनुसार अस्पताल दिखेंगे। बाकी dropdown वैकल्पिक हैं।' : 'Choose any one dropdown to see matching hospitals. All other dropdowns are optional.'}</p>
+    <section className="card">{labels.map((label, level) => <div key={label}>
+      <label htmlFor={`area-${level}`}>{label}</label>
+      <select id={`area-${level}`} value={selected[fields[level]] || ''} onChange={(event) => setSelected((current) => ({ ...current, [fields[level]]: event.target.value }))}>
+        <option value="">Select {label} (optional)</option>
+        {(options[level] || []).map((item) => <option key={item} value={item}>{item}</option>)}
+      </select>
+    </div>)}
+    {hasSelection && <button type="button" className="b" onClick={() => setSelected({})}>Clear selections</button>}
+    </section>
+    {hasSelection && <HospitalList query={query.toString()} splitTypes mapSearch={mapSearch} />}
+  </>;
+}function Saved() {
   const [s, setS] = useState(null); useEffect(() => { cachedGet('/saved').then(setS).catch(() => setS({ data: { hospitals: [], doctors: [] } })); }, []);
   if (!s) return <p>…</p>;
   return <><h2>Saved facilities</h2>{s.fromCache && <p className="stale">Offline copy. It may be out of date.</p>}{s.data.hospitals.map((h) => <div className="card" key={h._id}><b>{h.name}</b> · {h.city}{h.emergencyPhone && <p><a href={`tel:${h.emergencyPhone}`}>Call {h.emergencyPhone}</a></p>}</div>)}{s.data.doctors.map((d) => <div className="card" key={d._id}><b>{d.user?.name}</b> · {d.specialization}</div>)}</>;
@@ -266,8 +402,29 @@ function Notifications() {
   return <><h2>Notifications</h2>{!l.length && <p>No notifications yet.</p>}{l.map((n) => <div className="card" key={n._id}><b>{n.title}</b><p>{n.body}</p></div>)}</>;
 }
 function OfflineData() {
-  const keys = Object.keys(localStorage).filter((k) => k.startsWith('c:')), [n, setN] = useState(0); const { pending } = useApp();
-  return <><h2>Offline data</h2><p>{keys.length} saved pages on this device. Waiting to send: {pending}.</p>{keys.map((k) => <div className="card" key={k}>{k.slice(2)}<br /><span className="stale">Saved {new Date(JSON.parse(localStorage[k]).at).toLocaleString()}</span></div>)}<button className="b" onClick={() => { keys.forEach((k) => localStorage.removeItem(k)); setN(n + 1); }}>Clear saved pages</button></>;
+  const { user, online, t, lang } = useApp(), [records, setRecords] = useState(null), [savedAt, setSavedAt] = useState(null), [error, setError] = useState('');
+  const key = (user?._id || user?.id) ? `healthconnect:records:${user._id || user.id}` : '';
+  useEffect(() => {
+    if (!user || user.role !== 'PATIENT') return;
+    let active = true;
+    try { const snapshot = JSON.parse(localStorage.getItem(key) || 'null'); if (snapshot) { setRecords(snapshot.data); setSavedAt(snapshot.savedAt); } } catch { localStorage.removeItem(key); }
+    if (online) api('/records/mine').then((data) => {
+      if (!active) return;
+      const at = new Date().toISOString(); localStorage.setItem(key, JSON.stringify({ data, savedAt: at }));
+      setRecords(data); setSavedAt(at); setError('');
+    }).catch((e) => { if (active && !records) setError(e.message); });
+    return () => { active = false; };
+  }, [key, online, user]);
+  if (!user) return <><h2>{t('recordsTitle')}</h2><p>{t('signInForOffline')}</p></>;
+  if (user.role !== 'PATIENT') return <><h2>{t('recordsTitle')}</h2><p>{t('patientOnly')}</p></>;
+  const statusLabel = (status = '') => lang === 'hi' ? ({ PENDING: t('statusPending'), ACCEPTED: t('statusAccepted'), REJECTED: t('statusRejected'), COMPLETED: t('statusCompleted'), REQUESTED: t('statusRequested'), DISPATCHED: t('statusDispatched') }[status] || status) : status;
+  const items = [
+    ...(records?.appointments || []).map((x) => ({ id: x._id, at: x.when, type: t('appointmentRecord'), title: x.hospital?.name || x.doctor?.user?.name || t('appointmentRecord'), detail: `${x.doctor?.specialization || ''} · ${statusLabel(x.status)}` })),
+    ...(records?.complaints || []).map((x) => ({ id: x._id, at: x.createdAt, type: t('complaintRecord'), title: x.complaintId, detail: `${x.category} · ${statusLabel(x.status)} · ${x.description}` })),
+    ...(records?.emergencies || []).map((x) => ({ id: x._id, at: x.createdAt, type: t('emergencyRecord'), title: x.kind, detail: statusLabel(x.status) })),
+    ...(records?.reviews || []).map((x) => ({ id: x._id, at: x.createdAt, type: t('reviewRecord'), title: x.hospital?.name || x.doctor?.specialization || t('reviewRecord'), detail: `${x.scores?.overall || '—'}/5 · ${x.text || ''}` })),
+  ].sort((a, b) => new Date(b.at) - new Date(a.at));
+  return <><h2>{t('recordsTitle')}</h2><p>{online ? t('recordsOnline') : t('recordsOffline')}{savedAt && <> {t('savedAt')} {new Date(savedAt).toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-IN')}.</>}</p><p className="stale">{t('recordScope')}</p>{error && <p className="err" role="alert">{error}</p>}{!records && !error && <p>{lang === 'hi' ? 'सहेजे गए रिकॉर्ड लोड हो रहे हैं…' : 'Loading saved records…'}</p>}{records && <><p>{items.length} {t('recordCount')}</p>{items.length ? items.map((x) => <article className="card" key={`${x.type}-${x.id}`}><span className="tag">{x.type}</span><b>{x.title}</b><p>{x.detail}</p><span className="stale">{new Date(x.at).toLocaleString(lang === 'hi' ? 'hi-IN' : 'en-IN')}</span></article>) : <p>{t('noRecords')}</p>}</>}<button className="b" disabled={!key} onClick={() => { if (key) localStorage.removeItem(key); setRecords(null); setSavedAt(null); }}>{t('removeLocalRecords')}</button></>;
 }
 function Forgot() {
   const [f, setF] = useState({}), [step, setStep] = useState(0), [m, setM] = useState('');
@@ -277,8 +434,8 @@ function Forgot() {
 }
 function OtpLogin() {
   const { setUser } = useApp(), nav = useNavigate(), [f, setF] = useState({}), [sent, setSent] = useState(false), [m, setM] = useState('');
-  const go = async (e) => { e.preventDefault(); try { if (!sent) { await api('/auth/otp/request', { method: 'POST', body: f }); setSent(true); setM('Code sent.'); } else { setUser(await api('/auth/otp/verify', { method: 'POST', body: f })); nav('/'); } } catch (x) { setM(x.message); } };
-  return <form className="card" onSubmit={go}><h2>Log in with phone code</h2><label htmlFor="op">Phone number</label><input id="op" required inputMode="tel" onChange={(e) => setF({ ...f, identifier: e.target.value })} />{sent && <><label htmlFor="oc">6-digit code</label><input id="oc" inputMode="numeric" maxLength="6" required onChange={(e) => setF({ ...f, code: e.target.value })} /></>}<button className="b">{sent ? 'Verify' : 'Send code'}</button><p role="status">{m}</p></form>;
+  const go = async (e) => { e.preventDefault(); try { if (!sent) { await api('/auth/otp/request', { method: 'POST', body: { identifier: f.identifier } }); setSent(true); setM('Code sent. New patients can enter their profile details below; existing patients may leave them blank.'); } else { const profile = f.name && f.age !== undefined && f.gender ? { name: f.name, age: Number(f.age), gender: f.gender, ...(f.bloodGroup && { bloodGroup: f.bloodGroup }) } : undefined; setUser(await api('/auth/otp/verify', { method: 'POST', body: { identifier: f.identifier, code: f.code, ...(profile && { patientProfile: profile }) } })); nav('/'); } } catch (x) { setM(x.message); } };
+  return <form className="card" onSubmit={go}><h2>Patient phone OTP</h2><label htmlFor="op">Phone number</label><input id="op" required inputMode="tel" onChange={(e) => setF({ ...f, identifier: e.target.value })} />{sent && <><label htmlFor="oc">6-digit code</label><input id="oc" inputMode="numeric" maxLength="6" required onChange={(e) => setF({ ...f, code: e.target.value })} /><fieldset><legend>New patient profile (existing patients may skip)</legend><label htmlFor="otpName">Name</label><input id="otpName" onChange={(e) => setF({ ...f, name: e.target.value })} /><label htmlFor="otpAge">Age</label><input id="otpAge" type="number" min="0" max="120" onChange={(e) => setF({ ...f, age: e.target.value })} /><label htmlFor="otpGender">Gender</label><select id="otpGender" onChange={(e) => setF({ ...f, gender: e.target.value })}><option value="">Choose</option><option value="FEMALE">Female</option><option value="MALE">Male</option><option value="OTHER">Other</option><option value="PREFER_NOT_TO_SAY">Prefer not to say</option></select><label htmlFor="otpBlood">Blood group (optional)</label><select id="otpBlood" onChange={(e) => setF({ ...f, bloodGroup: e.target.value })}><option value="">Not provided</option>{['A+','A-','B+','B-','AB+','AB-','O+','O-'].map((g) => <option key={g}>{g}</option>)}</select></fieldset></>}<button className="b">{sent ? 'Verify and continue' : 'Send OTP'}</button><p role="status">{m}</p></form>;
 }
 function DoctorDash() {
   const [p, setP] = useState({}), [apps, setApps] = useState([]), [m, setM] = useState('');
@@ -286,18 +443,29 @@ function DoctorDash() {
   const save = async (e) => { e.preventDefault(); const { _id, user, verified, rating, ratingCount, createdAt, updatedAt, __v, ...d } = p; await api('/doctors/me', { method: 'PUT', body: d }); setM('Saved. A government admin must verify your licence before the Verified badge shows.'); };
   const act = async (id, status) => { await api('/appointments/' + id, { method: 'PATCH', body: { status } }); load(); };
   const F = (k, l, type = 'text') => <><label htmlFor={k}>{l}</label><input id={k} type={type} value={p[k] ?? ''} onChange={(e) => setP({ ...p, [k]: type === 'number' ? +e.target.value : e.target.value })} /></>;
-  return <><h2>Doctor dashboard</h2><p><span className="tag">{p.verified ? 'Verified Doctor' : 'Verification pending'}</span></p>
+  return <><h2>Doctor dashboard</h2><p><span className="tag">{p.verified ? 'Verified Doctor' : 'Verification pending'}</span></p><IdentityPanel />
     <form className="card" onSubmit={save}>{F('qualification', 'Qualification')}{F('specialization', 'Specialization')}{F('licenseNo', 'Medical registration number')}{F('experience', 'Experience (years)', 'number')}{F('fee', 'Consultation fee', 'number')}<button className="b">Save profile</button><p role="status">{m}</p></form>
     <h3>Appointment requests</h3>{apps.map((a) => <div className="card" key={a._id}>{new Date(a.when).toLocaleString()} <span className="tag">{a.status}</span>{a.status === 'PENDING' && <><button className="b" onClick={() => act(a._id, 'ACCEPTED')}>Accept</button><button className="b" onClick={() => act(a._id, 'REJECTED')}>Reject</button></>}{a.status === 'ACCEPTED' && <><button className="b" onClick={() => act(a._id, 'COMPLETED')}>Mark completed</button><ChatBox id={a._id} /></>}</div>)}<DoctorFeedback id={p._id} /></>;
 }
+function IdentityPanel() {
+  const [checks, setChecks] = useState(null), [message, setMessage] = useState(''), [consent, setConsent] = useState(false);
+  const load = () => api('/identity/me').then(setChecks).catch((e) => setMessage(e.message));
+  useEffect(load, []);
+  const request = async () => { try { await api('/identity/request', { method: 'POST', body: { consent } }); setMessage('Request submitted. Official identity provider checks are not connected in this demo.'); load(); } catch (e) { setMessage(e.message); } };
+  return <section className="card"><h3>Authorized person identity checks</h3><p>Aadhaar, PAN and DigiLocker results are recorded only after an authorized provider check. This demo has no provider connection. Never enter identity numbers here.</p>
+    {checks && ['aadhaar', 'pan', 'digilocker'].map((key) => <p key={key}><b>{key === 'digilocker' ? 'DigiLocker' : key.toUpperCase()}:</b> <span className="tag">{checks[key]?.status || 'NOT_STARTED'}</span></p>)}
+    {!checks?.submittedAt && <><label><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /> I consent to creating an identity review request. Any real provider check requires a separate consent step.</label><button className="b" disabled={!consent} onClick={request}>Request verification review</button></>}{message && <p role="status">{message}</p>}</section>;
+}
+
 function HospitalDash() {
   const [d, setD] = useState(null), [none, setNone] = useState(false), [f, setF] = useState({ type: 'PRIVATE' }), [m, setM] = useState('');
   const load = () => api('/hospital/me').then(setD).catch((e) => e.status === 404 && setNone(true)); useEffect(() => { load(); }, []);
   const setBed = async (k, v) => { await api(`/hospitals/${d.hospital._id}/beds`, { method: 'PATCH', body: { [k]: v } }); load(); };
   const claim = async (e) => { e.preventDefault(); try { await api('/hospital/claim', { method: 'POST', body: { ...f, lat: +f.lat, lng: +f.lng } }); setNone(false); load(); } catch (x) { setM(x.message); } };
-  if (none) return <form className="card" onSubmit={claim}><h2>Register your hospital</h2>{['name', 'city', 'area', 'phone', 'lat', 'lng'].map((k) => <div key={k}><label htmlFor={k}>{k}</label><input id={k} required={k !== 'area' && k !== 'phone'} onChange={(e) => setF({ ...f, [k]: e.target.value })} /></div>)}<label htmlFor="ty2">Type</label><select id="ty2" onChange={(e) => setF({ ...f, type: e.target.value })}><option value="PRIVATE">Private</option><option value="GOVERNMENT">Government</option></select><button className="b">Submit for verification</button><p className="err">{m}</p></form>;
+  const uploadDocs = async (e) => { e.preventDefault(); const el = e.currentTarget, form = new FormData(); for (const file of el.documents.files) form.append('documents', file); try { await api('/hospital/verification-documents', { method: 'POST', form }); setM('Licence documents submitted for government-admin review.'); el.reset(); load(); } catch (x) { setM(x.message); } };
+  if (none) return <form className="card" onSubmit={claim}><h2>Register your hospital</h2>{['name', 'licenseNumber', 'city', 'area', 'phone', 'lat', 'lng'].map((k) => <div key={k}><label htmlFor={k}>{k === 'licenseNumber' ? 'Hospital licence / registration number' : k}</label><input id={k} required={k !== 'area' && k !== 'phone'} onChange={(e) => setF({ ...f, [k]: e.target.value })} /></div>)}<label htmlFor="ty2">Type</label><select id="ty2" onChange={(e) => setF({ ...f, type: e.target.value })}><option value="PRIVATE">Private</option><option value="GOVERNMENT">Government</option></select><button className="b">Submit for verification</button><p className="err">{m}</p></form>;
   if (!d) return <p>…</p>;
-  return <><h2>{d.hospital.name}</h2><span className="tag">{d.hospital.verified ? 'Verified' : 'Verification pending'}</span>
+  return <><h2>{d.hospital.name}</h2><span className="tag">{d.hospital.verified ? 'Verified' : 'Verification pending'}</span><section className="card"><b>Hospital licence / registration:</b> {d.hospital.licenseNumber || 'Not on file'}{!d.hospital.verified && <form onSubmit={uploadDocs}><label htmlFor="hospitalDocs">Upload licence proof (PDF, JPG, PNG, WEBP; up to five files)</label><input id="hospitalDocs" name="documents" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" multiple required /><button className="b">Submit verification documents</button></form>}<p role="status">{m}</p></section><IdentityPanel />
     <h3>Bed availability</h3>{['general', 'icu', 'emergency', 'pediatric', 'maternity'].map((k) => <div className="card" key={k}><b>{k}</b> <span className={`tag ${d.hospital.beds?.[k]?.status || 'FULL'}`}>{d.hospital.beds?.[k]?.status || 'NOT SET'}</span><br />{['AVAILABLE', 'LIMITED', 'FULL'].map((v) => <button key={v} className="b" onClick={() => setBed(k, v)}>{v}</button>)}</div>)}
     <PriceEditor key={'p' + (d.hospital.prices?.length || 0)} id={d.hospital._id} prices={d.hospital.prices || []} done={load} /><HospitalProfile h={d.hospital} done={load} /><h3>Complaints about this hospital</h3>{d.complaints.map((c) => <div className="card" key={c.complaintId}>{c.complaintId} · {c.category} <span className="tag">{c.status}</span></div>)}
     <h3>Doctors</h3>{d.doctors.map((x) => <div className="card" key={x._id}>{x.user?.name} · {x.specialization}</div>)}</>;
@@ -330,24 +498,112 @@ function DoctorFeedback({ id }) {
   const reply = async (rid) => { await api(`/reviews/${rid}/reply`, { method: 'POST', body: { text: t[rid] } }); load(); };
   return <><h3>Patient feedback</h3>{!l.length && <p>No feedback yet.</p>}{l.map((r) => <div className="card" key={r._id}>Overall {r.scores?.overall}/5 · {r.text}{r.reply ? <p><b>Your reply:</b> {r.reply.text}</p> : <><label htmlFor={'r' + r._id}>Reply</label><input id={'r' + r._id} onChange={(e) => setT({ ...t, [r._id]: e.target.value })} /><button className="b" onClick={() => reply(r._id)}>Post reply</button></>}</div>)}</>;
 }
+function Profile() {
+  const { user, setUser, lang, setLang } = useApp();
+  const [profile, setProfile] = useState(null), [form, setForm] = useState({}), [message, setMessage] = useState(''), [error, setError] = useState('');
+  useEffect(() => { api('/users/me').then((data) => { setProfile(data); setForm({ name: data.name || '', age: data.age ?? '', gender: data.gender || '', bloodGroup: data.bloodGroup || '', bio: data.bio || '', location: data.location || '', language: data.language || 'en' }); }).catch((e) => setError(e.message)); }, []);
+  const save = async (event) => {
+    event.preventDefault(); setError(''); setMessage('');
+    try {
+      const patch = { name: form.name, bio: form.bio, location: form.location, language: form.language };
+      if (profile.role === 'PATIENT') {
+        patch.age = form.age === '' ? null : Number(form.age);
+        patch.gender = form.gender || null;
+        patch.bloodGroup = form.bloodGroup || null;
+      }
+      const updated = await api('/users/me', { method: 'PATCH', body: patch });
+      setProfile(updated); setUser((current) => ({ ...current, ...updated, _id: current?._id || updated.id })); setLang(updated.language || 'en');
+      setMessage(lang === 'hi' ? 'प्रोफ़ाइल अपडेट हो गई।' : 'Profile updated.');
+    } catch (e) { setError(e.message); }
+  };
+  if (!profile) return <p>{error || 'Loading profile…'}</p>;
+  const initials = profile.name?.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'U';
+  return <div className="profile-page"><section className="profile-heading card"><span className="account-avatar profile-avatar">{initials}</span><div><h2>{profile.name}</h2><p>{profile.role.replaceAll('_', ' ').toLowerCase()} · {lang === 'hi' ? 'सदस्य' : 'Member'} {new Date(profile.createdAt).toLocaleDateString()}</p>{profile.location && <p>⌖ {profile.location}</p>}</div><Link className="big" to="/settings">{lang === 'hi' ? 'सेटिंग्स' : 'Settings'}</Link></section>
+    <div className="profile-columns"><aside><section className="card"><h3>{lang === 'hi' ? 'खाता' : 'Account'}</h3><p>{profile.email || profile.phone || (lang === 'hi' ? 'संपर्क जानकारी उपलब्ध नहीं' : 'No contact information')}</p><span className="tag">{profile.role.replaceAll('_', ' ')}</span>{profile.bloodGroup && <span className="tag">{profile.bloodGroup}</span>}</section><section className="card profile-shortcuts"><h3>{lang === 'hi' ? 'आपकी सेवाएँ' : 'Your spaces'}</h3>{profile.role === 'PATIENT' && <Link to="/appointments">{lang === 'hi' ? 'मेरी अपॉइंटमेंट' : 'Appointments'}</Link>}<Link to="/saved">{lang === 'hi' ? 'सेव किए गए अस्पताल और डॉक्टर' : 'Saved hospitals and doctors'}</Link><Link to="/offline-data">{lang === 'hi' ? 'ऑफ़लाइन रिकॉर्ड' : 'Offline records'}</Link></section></aside>
+      <section><form className="card" onSubmit={save}><h3>{lang === 'hi' ? 'प्रोफ़ाइल विवरण' : 'Profile details'}</h3><label htmlFor="profile-name">{lang === 'hi' ? 'पूरा नाम' : 'Name'}</label><input id="profile-name" required minLength="2" maxLength="100" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        <label htmlFor="profile-bio">{lang === 'hi' ? 'परिचय' : 'Bio'}</label><textarea id="profile-bio" maxLength="280" rows="3" value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} placeholder={lang === 'hi' ? 'अपने बारे में लिखें' : 'Write a short introduction'} />
+        <label htmlFor="profile-location">{lang === 'hi' ? 'स्थान' : 'Location'}</label><input id="profile-location" maxLength="120" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+        {profile.role === 'PATIENT' && <><label htmlFor="profile-age">{lang === 'hi' ? 'आयु' : 'Age'}</label><input id="profile-age" type="number" min="0" max="120" value={form.age} onChange={(e) => setForm({ ...form, age: e.target.value })} /><label htmlFor="profile-gender">{lang === 'hi' ? 'लिंग' : 'Gender'}</label><select id="profile-gender" value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}><option value="">{lang === 'hi' ? 'नहीं बताया' : 'Not provided'}</option>{[['FEMALE','Female'],['MALE','Male'],['OTHER','Other'],['PREFER_NOT_TO_SAY','Prefer not to say']].map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select><label htmlFor="profile-blood">{lang === 'hi' ? 'रक्त समूह' : 'Blood group'}</label><select id="profile-blood" value={form.bloodGroup} onChange={(e) => setForm({ ...form, bloodGroup: e.target.value })}><option value="">{lang === 'hi' ? 'नहीं बताया' : 'Not provided'}</option>{['A+','A-','B+','B-','AB+','AB-','O+','O-'].map((group) => <option key={group}>{group}</option>)}</select></>}
+        <label htmlFor="profile-language">{lang === 'hi' ? 'भाषा' : 'Language'}</label><select id="profile-language" value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value })}><option value="en">English</option><option value="hi">हिन्दी</option></select><button className="b">{lang === 'hi' ? 'प्रोफ़ाइल सेव करें' : 'Save profile'}</button><p role="status">{message}</p>{error && <p className="err" role="alert">{error}</p>}</form></section></div>
+  </div>;
+}
+
 function Settings() {
   const { user, lang, setLang, low, setLow, t } = useApp(), [m, setM] = useState('');
-  return <><h2>Settings</h2><div className="card"><p>Signed in as <b>{user.name}</b> ({user.role})</p>
-    <label htmlFor="sl">Language</label><select id="sl" value={lang} onChange={(e) => setLang(e.target.value)}><option value="en">English</option><option value="hi">हिन्दी</option></select>
+  return <><h2>{t('settings')}</h2><div className="card"><p>{t('signedInAs')} <b>{user.name}</b> ({user.role})</p>
+    <label htmlFor="sl">{t('language')}</label><select id="sl" value={lang} onChange={(e) => setLang(e.target.value)}><option value="en">English</option><option value="hi">हिन्दी</option></select>
     <label><input type="checkbox" style={{ width: 'auto' }} checked={low} onChange={(e) => setLow(e.target.checked)} /> {t('lowdata')}</label>
-    <button className="b" onClick={async () => { await api('/auth/logout-all', { method: 'POST' }); setM('Logged out on all devices. Please log in again.'); setTimeout(() => location.assign('/login'), 1200); }}>Log out from all devices</button><p role="status">{m}</p></div></>;
+    <button className="b" onClick={async () => { await api('/auth/logout-all', { method: 'POST' }); clearOfflineSnapshot(user); setM(lang === 'hi' ? 'सभी डिवाइस से लॉग आउट हो गया। फिर से साइन इन करें।' : 'Logged out on all devices. Please log in again.'); setTimeout(() => location.assign('/login'), 1200); }}>{t('logoutAll')}</button><p role="status">{m}</p></div></>;
 }
 function VoiceButton() {
   const { lang } = useApp(), nav = useNavigate(), [msg, setMsg] = useState(''), SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return null;
-  const listen = () => { const r = new SR(); r.lang = lang === 'hi' ? 'hi-IN' : 'en-IN'; r.onresult = (e) => { const to = voiceRoute(e.results[0][0].transcript); to ? nav(to) : setMsg('Sorry, I did not understand.'); }; r.onerror = () => setMsg('Voice not available.'); r.start(); setMsg('Listening…'); };
+  const listen = () => { const r = new SR(); r.lang = lang === 'hi' ? 'hi-IN' : 'en-IN'; r.onresult = (e) => { const phrase = e.results[0][0].transcript.trim(), route = voiceRoute(phrase), query = voiceQuery(phrase); if (route === '/hospitals' && query) nav(`/hospitals?q=${encodeURIComponent(query)}`); else if (route === '/doctors' && query) nav(`/doctors?specialization=${encodeURIComponent(query)}`); else if (route) nav(route); else if (query) nav(`/hospitals?q=${encodeURIComponent(query)}`); else setMsg(lang === 'hi' ? 'सेवा, अस्पताल या डॉक्टर का नाम बोलें।' : 'Please say a service, hospital, or doctor name.'); }; r.onerror = () => setMsg(lang === 'hi' ? 'आवाज़ उपलब्ध नहीं है। माइक्रोफ़ोन अनुमति जाँचें।' : 'Voice input is unavailable. Check microphone permission and try again.'); r.start(); setMsg(lang === 'hi' ? 'सुन रहे हैं…' : 'Listening…'); };
   return <><button className="b" onClick={listen} aria-label="Voice navigation">🎤</button><span role="status">{msg}</span></>;
 }
 
+function LiveFleet() {
+  const { low } = useApp(), [fleet, setFleet] = useState([]), [focus, setFocus] = useState('');
+  const load = () => api('/ambulances/live').then(setFleet).catch(() => setFleet([]));
+  useEffect(() => { load(); const base = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, ''); const stream = new EventSource(`${base}/ambulances/stream`, { withCredentials: true }); stream.onmessage = load; const fallback = setInterval(load, 30000); return () => { stream.close(); clearInterval(fallback); }; }, []);
+  const valid = fleet.filter((a) => { const [lng, lat] = a.location?.coordinates || []; return Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0); });
+  const focused = valid.find((a) => a._id === focus) || valid[0];
+  const coords = valid.flatMap((a) => [[a.location.coordinates[0], a.location.coordinates[1]], ...(a.site?.location?.coordinates ? [a.site.location.coordinates] : [])]);
+  const lngs = coords.map((c) => c[0]), lats = coords.map((c) => c[1]);
+  const minX = lngs.length ? Math.min(...lngs) : 0, maxX = lngs.length ? Math.max(...lngs) : 1, minY = lats.length ? Math.min(...lats) : 0, maxY = lats.length ? Math.max(...lats) : 1;
+  const sx = maxX === minX ? 1 : maxX - minX, sy = maxY === minY ? 1 : maxY - minY;
+  const point = ([x, y]) => [55 + ((x - minX) / sx) * 890, 345 - ((y - minY) / sy) * 290];
+  const [lng, lat] = focused?.location?.coordinates || [];
+  const map = focused ? `https://www.openstreetmap.org/export/embed.html?bbox=${lng - .03}%2C${lat - .02}%2C${lng + .03}%2C${lat + .02}&layer=mapnik&marker=${lat}%2C${lng}` : '';
+  const statusColor = (s) => s === 'DISPATCHED' ? '#ef4444' : s === 'MAINTENANCE' ? '#64748b' : s === 'ON_SITE' ? '#eab308' : '#22c55e';
+  const counts = Object.fromEntries(['AVAILABLE','DISPATCHED','ON_SITE','MAINTENANCE'].map((s) => [s, fleet.filter((a) => a.status === s).length]));
+  return <><h2>Live ambulance locations</h2><p>Fleet updates every five seconds. Exact positions are available to signed-in users.</p><div className="grid">{[['Total fleet', fleet.length], ['Dispatched', counts.DISPATCHED], ['Available', counts.AVAILABLE], ['On site', counts.ON_SITE]].map(([k,v]) => <div className="card" key={k}><b>{k}</b><p>{v}</p></div>)}</div>
+    <section className="card"><h3>Fleet position plot</h3><svg role="img" aria-label="Map plot of all ambulances and their registered sites" viewBox="0 0 1000 400" style={{ width: '100%', background: '#0d1420', borderRadius: '12px' }}>{Array.from({length: 9}, (_,i) => <line key={'v'+i} x1={i*125} x2={i*125} y1="0" y2="400" stroke="#273244" />)}{Array.from({length: 5}, (_,i) => <line key={'h'+i} x1="0" x2="1000" y1={i*100} y2={i*100} stroke="#273244" />)}{fleet.map((a) => { const c=a.location?.coordinates, loc=c && (c[0]!==0 || c[1]!==0) ? point(c) : null, site=a.site?.location?.coordinates ? point(a.site.location.coordinates) : null; return <g key={a._id}>{loc && site && <line x1={loc[0]} y1={loc[1]} x2={site[0]} y2={site[1]} stroke="#64748b" strokeDasharray="5 5" />}{site && <><circle cx={site[0]} cy={site[1]} r="11" fill="none" stroke="#38bdf8" strokeWidth="2"/><text x={site[0]+13} y={site[1]+4} fill="#bae6fd" fontSize="13">{a.site.name}</text></>}{loc && <g role="button" tabIndex="0" aria-label={`${a.vehicleId}, ${a.status}`} onClick={() => setFocus(a._id)} onKeyDown={(e) => e.key === 'Enter' && setFocus(a._id)} style={{cursor:'pointer'}}><circle cx={loc[0]} cy={loc[1]} r="9" fill={statusColor(a.status)} stroke="#fff" strokeWidth="2"/><text x={loc[0]+12} y={loc[1]-10} fill="#fff" fontSize="13">{a.vehicleId}</text></g>}</g>; })}</svg><p><span style={{color:'#22c55e'}}>● Available</span>　<span style={{color:'#ef4444'}}>● Dispatched</span>　<span style={{color:'#eab308'}}>● On site</span>　<span style={{color:'#64748b'}}>● Maintenance</span>　<span style={{color:'#38bdf8'}}>◎ Station</span></p><p className="stale">Plot positions are proportional to longitude and latitude. Select a vehicle to see its street map below.</p></section>
+    {focused && <section className="card"><label htmlFor="live-focus">Focus vehicle</label><select id="live-focus" value={focused._id} onChange={(e) => setFocus(e.target.value)}>{valid.map((a) => <option key={a._id} value={a._id}>{a.vehicleId}</option>)}</select><p>{focused.vehicleId} · {focused.status} · {focused.site?.name || 'Moving'} · Updated {focused.updatedAt ? new Date(focused.updatedAt).toLocaleTimeString() : '—'}</p>{!low && <iframe title={`Street map for ${focused.vehicleId}`} src={map} loading="lazy" style={{width:'100%',height:'320px',border:0,borderRadius:'12px'}} />}</section>}
+    <div className="grid">{fleet.map((a) => <article className="card" key={a._id}><b>{a.vehicleId}</b> · {a.type} <span className="tag">{a.status}</span><p>{a.site?.name || 'Between sites'}</p><p>Updated {a.updatedAt ? new Date(a.updatedAt).toLocaleTimeString() : 'No GPS ping yet'}</p></article>)}</div></>;
+}
+
+function FleetPanel() {
+  const { user, low } = useApp();
+  const [fleet, setFleet] = useState([]), [sites, setSites] = useState([]), [hospitals, setHospitals] = useState([]), [msg, setMsg] = useState(''), [form, setForm] = useState({}), [siteForm, setSiteForm] = useState({ radiusMeters: 150 }), [focus, setFocus] = useState(''), [pairing, setPairing] = useState(null);
+  const watchers = useRef({});
+  const load = async () => { try { const [a, s, h] = await Promise.all([api('/ambulances/fleet'), api('/sites'), user?.role === 'GOVERNMENT_ADMIN' || user?.role === 'SUPER_ADMIN' ? api('/hospitals?limit=50') : Promise.resolve([])]); setFleet(a); setSites(s); setHospitals(h.filter((x) => x.verified)); } catch (e) { setMsg(e.message); } };
+  useEffect(() => { load(); const timer = setInterval(load, 5000); return () => clearInterval(timer); }, []);
+  useEffect(() => () => Object.values(watchers.current).forEach((id) => navigator.geolocation?.clearWatch(id)), []);
+  const submit = async (e) => { e.preventDefault(); try { const a = await api('/ambulances/fleet', { method: 'POST', body: { ...form, equipment: (form.equipment || '').split(',').map((x) => x.trim()).filter(Boolean), ...(form.site && { site: form.site }), ...(form.hospital && { hospital: form.hospital }), ...(form.lat && form.lng && { lat: +form.lat, lng: +form.lng }) } }); setPairing({ vehicleId: a.vehicleId, token: a.driverInviteToken }); setForm({}); setMsg('Ambulance registered. Give the one-time invitation below to its driver.'); load(); } catch (x) { setMsg(x.message); } };
+  const addSite = async (e) => { e.preventDefault(); try { await api('/sites', { method: 'POST', body: { ...siteForm, lat: +siteForm.lat, lng: +siteForm.lng, radiusMeters: +siteForm.radiusMeters, ...(siteForm.hospital && { hospital: siteForm.hospital }) } }); setMsg('Site registered.'); load(); } catch (x) { setMsg(x.message); } };
+  const track = (a) => { if (!navigator.geolocation) return setMsg('GPS is unavailable in this browser.'); if (watchers.current[a._id] !== undefined) { navigator.geolocation.clearWatch(watchers.current[a._id]); delete watchers.current[a._id]; setMsg(`GPS tracking stopped for ${a.vehicleId}.`); return; } watchers.current[a._id] = navigator.geolocation.watchPosition(async ({ coords }) => { try { await api(`/ambulances/${a._id}/location`, { method: 'PATCH', body: { lat: coords.latitude, lng: coords.longitude } }); setMsg(`Live GPS updated for ${a.vehicleId}.`); load(); } catch (e) { setMsg(e.message); navigator.geolocation.clearWatch(watchers.current[a._id]); delete watchers.current[a._id]; } }, (e) => setMsg(e.message), { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }); setMsg(`Live GPS tracking started for ${a.vehicleId}.`); };
+  const F = (s, set, k, label, type = 'text') => <><label>{label}</label><input required type={type} step={type === 'number' ? 'any' : undefined} value={s[k] ?? ''} onChange={(e) => set({ ...s, [k]: e.target.value })} /></>;
+  const focused = fleet.find((a) => a._id === focus) || fleet.find((a) => a.location?.coordinates?.some((n) => n !== 0));
+  const [mapLng, mapLat] = focused?.location?.coordinates || [];
+  const mapUrl = Number.isFinite(mapLat) && Number.isFinite(mapLng) && (mapLat !== 0 || mapLng !== 0) ? `https://www.openstreetmap.org/export/embed.html?bbox=${mapLng - .03}%2C${mapLat - .02}%2C${mapLng + .03}%2C${mapLat + .02}&layer=mapnik&marker=${mapLat}%2C${mapLng}` : '';
+  return <><h2>Ambulance fleet and live locations</h2><p>Refreshes automatically. Assigned drivers can sign in separately and stream GPS from their device.</p>{focused && <section className="card"><label htmlFor="fleet-focus">Focus ambulance</label><select id="fleet-focus" value={focused._id} onChange={(e) => setFocus(e.target.value)}>{fleet.map((a) => <option key={a._id} value={a._id}>{a.vehicleId} ({a.status.toLowerCase()})</option>)}</select>{mapUrl ? <iframe title={`Map location of ${focused.vehicleId}`} src={mapUrl} loading="lazy" style={{ width: '100%', height: '360px', border: 0, borderRadius: '12px', marginTop: '1rem' }} /> : <p>Waiting for the first GPS update for this ambulance.</p>}</section>}<div className="grid">{fleet.map((a) => <article className="card" key={a._id}><b>{a.vehicleId}</b> · {a.type} <span className="tag">{a.status}</span><p>Plate: {a.plateNumber} · {a.hospital?.name || a.agency}</p><p>{a.site?.name || 'Outside registered sites'} · Crew: {a.crew || 'Not assigned'}</p><p>Driver: {a.driver?.name || (a.driverInvitePending ? 'Invitation pending' : 'Not paired')}</p>{!a.driver && <button className="b" onClick={async () => { try { const invite = await api(`/ambulances/${a._id}/driver-invite`, { method: 'POST', body: {} }); setPairing({ vehicleId: invite.vehicleId, token: invite.driverInviteToken }); load(); } catch (e) { setMsg(e.message); } }}>Create driver invitation</button>}<p>Location: {a.location?.coordinates?.[1]?.toFixed(5)}, {a.location?.coordinates?.[0]?.toFixed(5)} · {a.updatedAt ? new Date(a.updatedAt).toLocaleTimeString() : 'Never updated'}</p><label>Status</label><select value={a.status} onChange={async (e) => { try { await api(`/ambulances/${a._id}`, { method: 'PATCH', body: { status: e.target.value } }); load(); } catch (x) { setMsg(x.message); } }}>{['AVAILABLE','DISPATCHED','ON_SITE','MAINTENANCE'].map((s) => <option key={s}>{s}</option>)}</select></article>)}</div>
+    <form className="card" onSubmit={submit}><h3>Register ambulance</h3>{F(form,setForm,'vehicleId','Fleet ID')}{F(form,setForm,'plateNumber','Plate number')}{F(form,setForm,'type','Vehicle type')}{F(form,setForm,'agency','Operating agency')}{F(form,setForm,'phone','Contact phone')}{F(form,setForm,'crew','Crew assignment')}{F(form,setForm,'equipment','Equipment, comma separated')}{user?.role !== 'HOSPITAL_ADMIN' && <><label>Approved hospital</label><select required value={form.hospital || ''} onChange={(e) => setForm({ ...form, hospital: e.target.value })}><option value="">Choose hospital</option>{hospitals.map((h) => <option key={h._id} value={h._id}>{h.name} · {h.city}</option>)}</select></>}<label>Stationed site</label><select value={form.site || ''} onChange={(e) => setForm({ ...form, site: e.target.value })}><option value="">No site</option>{sites.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}</select><button className="b">Register ambulance</button></form>
+    {pairing && <section className="card"><h3>One-time driver invitation for {pairing.vehicleId}</h3><p>Copy this code and give it directly to the assigned driver. It will only be shown once.</p><input aria-label="Driver invitation code" readOnly value={pairing.token} /></section>}
+    <form className="card" onSubmit={addSite}><h3>Register station geofence</h3>{F(siteForm,setSiteForm,'name','Site name')}{F(siteForm,setSiteForm,'address','Address')}{F(siteForm,setSiteForm,'lat','Latitude','number')}{F(siteForm,setSiteForm,'lng','Longitude','number')}{F(siteForm,setSiteForm,'radiusMeters','Boundary radius (meters)','number')}{user?.role !== 'HOSPITAL_ADMIN' && <><label>Approved hospital</label><select required value={siteForm.hospital || ''} onChange={(e) => setSiteForm({ ...siteForm, hospital: e.target.value })}><option value="">Choose hospital</option>{hospitals.map((h) => <option key={h._id} value={h._id}>{h.name} · {h.city}</option>)}</select></>}<button className="b">Register site</button></form><p role="status">{msg}</p></>;
+}
+
+function DriverDash() {
+  const [vehicle, setVehicle] = useState(null), [msg, setMsg] = useState(''), watch = useRef(null);
+  const load = () => api('/driver/me').then(setVehicle).catch((e) => setMsg(e.message));
+  useEffect(() => { load(); const timer = setInterval(load, 5000); return () => { clearInterval(timer); if (watch.current !== null) navigator.geolocation?.clearWatch(watch.current); }; }, []);
+  const toggle = () => {
+    if (!navigator.geolocation) return setMsg('This device does not provide browser GPS.');
+    if (watch.current !== null) { navigator.geolocation.clearWatch(watch.current); watch.current = null; setMsg('Location sharing stopped.'); return; }
+    watch.current = navigator.geolocation.watchPosition(async ({ coords }) => { try { await api('/driver/location', { method: 'PATCH', body: { lat: coords.latitude, lng: coords.longitude } }); load(); setMsg('Location sent.'); } catch (e) { setMsg(e.message); if (watch.current !== null) navigator.geolocation.clearWatch(watch.current); watch.current = null; } }, (e) => setMsg(e.message), { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
+    setMsg('Live location sharing is on while this page stays open.');
+  };
+  if (!vehicle) return <><h2>Driver GPS</h2><p role="status">{msg || 'Loading assigned ambulance…'}</p></>;
+  const [lng, lat] = vehicle.location?.coordinates || [];
+  const map = Number.isFinite(lat) && Number.isFinite(lng) && (lat || lng) ? `https://www.openstreetmap.org/export/embed.html?bbox=${lng - .03}%2C${lat - .02}%2C${lng + .03}%2C${lat + .02}&layer=mapnik&marker=${lat}%2C${lng}` : '';
+  return <><h2>Driver GPS</h2><section className="card"><h3>{vehicle.vehicleId} · {vehicle.type}</h3><span className="tag">{vehicle.status}</span><p>{vehicle.hospital?.name} · Station: {vehicle.site?.name || 'En route'}</p><p>Last location: {lat?.toFixed(5)}, {lng?.toFixed(5)} · {vehicle.updatedAt ? new Date(vehicle.updatedAt).toLocaleString() : 'No location received'}</p><button className="b" onClick={toggle}>{watch.current === null ? 'Start sharing live location' : 'Stop sharing location'}</button>{map && <iframe title="Assigned ambulance map" src={map} loading="lazy" style={{ width: '100%', height: '320px', border: 0, borderRadius: '12px', marginTop: '1rem' }} />}</section><p role="status">{msg}</p></>;
+}
+
 function AdminTools() {
-  const [tab, setTab] = useState('verify'), [d, setD] = useState({}), [q, setQ] = useState(''), [msg, setMsg] = useState('');
+  const [tab, setTab] = useState('verify'), [d, setD] = useState({}), [q, setQ] = useState(''), [msg, setMsg] = useState(''), [invite, setInvite] = useState('');
   const load = () => {
     if (tab === 'verify') api('/admin/queue').then(setD);
+    if (tab === 'identity') api('/admin/identity-queue').then((users) => setD({ identity: users }));
     if (tab === 'users') api('/admin/users?q=' + encodeURIComponent(q)).then((u) => setD({ users: u }));
     if (tab === 'reviews') api('/admin/reviews').then((r) => setD({ reviews: r }));
     if (tab === 'prices') api('/admin/price-outliers').then((p) => setD({ prices: p }));
@@ -356,9 +612,10 @@ function AdminTools() {
   useEffect(() => { setD({}); load(); }, [tab]);
   const act = async (fn) => { try { await fn(); setMsg('Done'); load(); } catch (e) { setMsg(e.message); } };
   const verify = (kind, id, v) => act(() => api(`/admin/verify/${kind}/${id}`, { method: 'PATCH', body: { verified: v } }));
-  return <><h2>Admin tools</h2><div className="row" role="tablist">{[['verify', 'Verification'], ['users', 'Users'], ['reviews', 'Flagged reviews'], ['prices', 'Price monitoring'], ['audit', 'Audit log']].map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className="b" onClick={() => setTab(k)}>{l}</button>)}</div><p role="status">{msg}</p>
+  return <><h2>Admin tools</h2><div className="row" role="tablist">{[['verify', 'Verification'], ['identity', 'Identity checks'], ['users', 'Users'], ['reviews', 'Flagged reviews'], ['prices', 'Price monitoring'], ['audit', 'Audit log']].map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className="b" onClick={() => setTab(k)}>{l}</button>)}</div><section className="card"><b>Privileged account invitations</b><p className="stale">Codes are single-use and expire in 48 hours. Only a super admin can create another super-admin invitation.</p><button className="b" onClick={async () => { try { const x = await api('/admin/invites', { method: 'POST', body: { role: 'GOVERNMENT_ADMIN' } }); setInvite(x.token); setMsg('Invitation created. Copy it now; it will not be shown again.'); } catch (e) { setMsg(e.message); } }}>Create government-admin invite</button><button className="b" onClick={async () => { try { const x = await api('/admin/invites', { method: 'POST', body: { role: 'SUPER_ADMIN' } }); setInvite(x.token); setMsg('Invitation created. Copy it now; it will not be shown again.'); } catch (e) { setMsg(e.message); } }}>Create super-admin invite</button>{invite && <p><label htmlFor="invite-output">One-time invite code</label><input id="invite-output" readOnly value={invite} /></p>}</section><p role="status">{msg}</p>
     {tab === 'verify' && <><h3>Doctors waiting</h3>{d.doctors?.map((x) => <div className="card" key={x._id}><b>{x.user?.name}</b> · {x.specialization} · Licence {x.licenseNo || 'not given'}<br /><button className="b" onClick={() => act(async () => setMsg(JSON.stringify((await api(`/admin/doctors/${x._id}/check-license`, { method: 'POST' })).notice)))}>Check licence (demo)</button><button className="b" onClick={() => verify('doctor', x._id, true)}>Verify</button></div>)}
-      <h3>Hospitals waiting</h3>{d.hospitals?.map((x) => <div className="card" key={x._id}><b>{x.name}</b> · {x.city} · {x.type}<br /><button className="b" onClick={() => verify('hospital', x._id, true)}>Verify</button></div>)}</>}
+      <h3>Hospitals waiting</h3>{d.hospitals?.map((x) => <div className="card" key={x._id}><b>{x.name}</b> · {x.city} · {x.type}<p>Licence / registration: {x.licenseNumber || 'Not submitted'}</p><p>{x.verificationDocuments?.length || 0} proof document(s)</p>{x.verificationDocuments?.map((f) => <p key={f.path}><a href={`/api/admin/hospitals/${x._id}/documents/${encodeURIComponent(f.path)}`} target="_blank" rel="noreferrer">Review {f.name}</a></p>)}<button className="b" disabled={!x.licenseNumber || !x.verificationDocuments?.length} onClick={() => verify('hospital', x._id, true)}>Approve after document review</button></div>)}</>}
+    {tab === 'identity' && <><p className="stale">Confirm each outcome directly with an authorized provider before marking it verified. This app does not connect to UIDAI, PAN services or DigiLocker and stores no identity numbers.</p>{d.identity?.map((u) => <article className="card" key={u._id}><b>{u.name}</b> · {u.role}{['aadhaar', 'pan', 'digilocker'].map((provider) => <div key={provider}><p>{provider.toUpperCase()}: {u.identityChecks?.[provider]?.status || 'NOT_STARTED'}</p><button className="b" onClick={() => { const providerRef = prompt('Enter provider transaction/reference ID after completing the check'); if (providerRef) act(() => api(`/admin/identity/${u._id}/${provider}`, { method: 'PATCH', body: { status: 'VERIFIED', providerRef } })); }}>Record verified</button><button className="b" onClick={() => act(() => api(`/admin/identity/${u._id}/${provider}`, { method: 'PATCH', body: { status: 'REJECTED' } }))}>Reject</button></div>)}</article>)}{!d.identity?.length && <p>No identity requests are waiting.</p>}</>}
     {tab === 'users' && <><label htmlFor="uq">Search name</label><input id="uq" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />{d.users?.map((u) => <div className="card" key={u._id}><b>{u.name}</b> · {u.email || u.phone} <span className="tag">{u.role}</span>{u.suspended && <span className="tag FULL">Suspended</span>}<br /><button className="b" onClick={() => confirm('Change account status?') && act(() => api(`/admin/users/${u._id}/suspend`, { method: 'PATCH', body: { suspended: !u.suspended } }))}>{u.suspended ? 'Reinstate' : 'Suspend'}</button></div>)}</>}
     {tab === 'reviews' && (d.reviews?.length ? d.reviews.map((r) => <div className="card" key={r._id}>{r.text || '(no text)'}<br /><button className="b" onClick={() => act(() => api(`/admin/reviews/${r._id}`, { method: 'PATCH', body: { hidden: true } }))}>Hide</button><button className="b" onClick={() => act(() => api(`/admin/reviews/${r._id}`, { method: 'PATCH', body: { hidden: false } }))}>Keep</button></div>) : <p>Nothing flagged.</p>)}
     {tab === 'prices' && <><p className="stale">Prices far above the median for the same service. This is a reason to look closer, not a finding of wrongdoing.</p>{d.prices?.map((p, i) => <div className="card" key={i}>{p.hospital}: {p.service} ₹{p.amount} (median ₹{p.median})</div>)}</>}
@@ -366,7 +623,7 @@ function AdminTools() {
 }
 
 function HospitalDetail() {
-  const { id } = useParams(), { t, user } = useApp(), [s, setS] = useState(null), [m, setM] = useState('');
+  const { id } = useParams(), { t, user, low } = useApp(), [s, setS] = useState(null), [m, setM] = useState('');
   useEffect(() => { cachedGet('/hospitals/' + id).then(setS).catch(() => setS({ data: null })); }, [id]);
   if (!s) return <p>…</p>; const h = s.data; if (!h) return <p>Hospital not found, or you are offline and have not opened it before.</p>;
   const save = async () => { try { await api(`/saved/hospital/${id}`, { method: 'PUT' }); setM('Saved'); } catch (e) { setM(e.message); } };
@@ -376,7 +633,20 @@ function HospitalDetail() {
       <p>{Object.entries(h.beds || {}).map(([k, b]) => <span key={k} className={`tag ${b.status}`}>{k}: {b.status}</span>)}</p>{h.beds?.general && <Freshness at={h.beds.general.updatedAt} fromCache={s.fromCache} />}</div>
     <h3>Declared prices</h3><div className="card">{h.prices?.length ? <table style={{ width: '100%' }}><thead><tr><th align="left">Service</th><th align="right">Price</th><th align="left">Rule</th><th align="left">Updated</th><th align="left">Status</th></tr></thead><tbody>{h.prices.map((p, i) => <tr key={i}><td>{p.service}</td><td align="right">₹{p.amount}</td><td>{p.rule || '—'}</td><td>{new Date(p.updatedAt).toLocaleDateString()}</td><td>{p.verified ? 'Verified' : 'Declared by hospital'}</td></tr>)}</tbody></table> : <p>This hospital has not published prices yet.</p>}
       <p className="stale">Prices are declared by the hospital and may change. If you were charged differently, you can tell the authorities.</p><Link className="big" to={`/complaints?hospital=${id}&category=EXCESSIVE_CHARGE`}>{t('pricing')}</Link></div>
+    <HospitalBooking hospitalId={id} user={user} low={low} />
     <div className="row">{user && <button className="b" onClick={save}>Save hospital</button>}<a className="big" href={`https://www.google.com/maps/dir/?api=1&destination=${h.location.coordinates[1]},${h.location.coordinates[0]}`} target="_blank" rel="noreferrer">{t('directions')}</a></div><p role="status">{m}</p></>;
+}
+function HospitalBooking({ hospitalId, user, low }) {
+  const { t, lang } = useApp(), [doctors, setDoctors] = useState([]), [doctor, setDoctor] = useState(''), [when, setWhen] = useState(''), [reason, setReason] = useState(''), [message, setMessage] = useState('');
+  useEffect(() => { cachedGet(`/doctors?hospital=${encodeURIComponent(hospitalId)}`).then((result) => setDoctors(result.data || [])).catch(() => setDoctors([])); }, [hospitalId]);
+  if (user?.role !== 'PATIENT') return <section className="card"><h3>{t('bookAtHospital')}</h3><p>{lang === 'hi' ? 'अपॉइंटमेंट का अनुरोध करने के लिए मरीज खाते से साइन इन करें।' : 'Please sign in with a patient account to request an appointment.'}</p><Link className="b" to="/login">{t('patientSignIn')}</Link></section>;
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!doctor || !when || new Date(when) <= new Date()) { setMessage(t('futureDate')); return; }
+    try { const result = await queuedPost('/appointments', { doctor, when: new Date(when).toISOString(), ...(reason.trim() && { reason: reason.trim() }) }); setMessage(result.queued ? t('appointmentQueued') : t('appointmentSent')); setWhen(''); }
+    catch (error) { setMessage(error.message); }
+  };
+  return <section className="card"><h3>{t('bookAtHospital')}</h3>{doctors.length ? <form onSubmit={submit}><label htmlFor="booking-doctor">{t('chooseDoctor')}</label><select id="booking-doctor" required value={doctor} onChange={(event) => setDoctor(event.target.value)}><option value="">{lang === 'hi' ? 'डॉक्टर चुनें' : 'Select a doctor'}</option>{doctors.map((d) => <option key={d._id} value={d._id}>{d.user?.name || t('doctor')} · {d.specialization} {d.verified ? `· ${t('verified')}` : (lang === 'hi' ? '· समीक्षा बाकी' : '· Review pending')}</option>)}</select><label htmlFor="booking-time">{t('appointmentTime')}</label><input id="booking-time" type="datetime-local" required value={when} onChange={(event) => setWhen(event.target.value)} /><label htmlFor="booking-reason">{t('visitReason')}</label><textarea id="booking-reason" maxLength="500" value={reason} onChange={(event) => setReason(event.target.value)} /><button className="b">{t('requestAppointment')}</button><p role="status">{message}</p>{!navigator.onLine && <p className="stale">{t('offlineQueued')}</p>}</form> : <p>{t('noHospitalDoctors')}</p>}</section>;
 }
 function PriceEditor({ id, prices, done }) {
   const [rows, setRows] = useState(prices.map(({ service, amount, rule }) => ({ service, amount, rule: rule || '' }))), [m, setM] = useState('');
@@ -399,16 +669,17 @@ const PAGES = {
   emergencyinfo: ['Emergency information', ['Call 108 (ambulance), 112 (unified emergency) or 102 (ambulance) now if someone is seriously ill or injured.', 'Do not wait for a website to load. Use the Emergency button for nearby hospitals.', 'This app cannot judge how serious a medical problem is. Emergency staff can.']],
   services: ['Healthcare services', ['Hospitals and clinics, doctor consultations, blood banks, ambulances, diagnostic tests, child and women\'s healthcare, and government healthcare schemes.']],
 };
-function Info({ page }) { const [title, lines] = PAGES[page]; return <><h2>{title}</h2>{lines.map((l) => <p className="card" key={l}>{l}</p>)}{page === 'emergencyinfo' && <div className="grid"><a className="big sos" href="tel:108">Call 108</a><a className="big" href="tel:112">Call 112</a></div>}</>; }
+function Info({ page }) { const [title, lines] = PAGES[page], { lang } = useApp(); return <><h2>{title}</h2>{lines.map((l) => <p className="card" key={l}>{l}</p>)}{page === 'emergencyinfo' && <EmergencyHelplines lang={lang} />}</>; }
 
 export default function App() {
   return <Provider><Layout><Routes>
-    <Route path="/" element={<Home />} /><Route path="/emergency" element={<Emergency />} /><Route path="/hospitals" element={<Hospitals />} /><Route path="/doctors" element={<Doctors />} />
-    <Route path="/blood" element={<Blood />} /><Route path="/ambulance" element={<Ambulance />} /><Route path="/help" element={<Guided />} /><Route path="/schemes" element={<Schemes />} />
+    <Route path="/" element={<Home />} /><Route path="/roles" element={<Roles />} /><Route path="/emergency" element={<Emergency />} /><Route path="/hospitals" element={<Hospitals />} /><Route path="/doctors" element={<Doctors />} />
+    <Route path="/blood" element={<Blood />} /><Route path="/ambulance" element={<Ambulance />} /><Route path="/ambulance-tracking" element={<Guard roles={['PATIENT','DOCTOR','HOSPITAL_ADMIN','GOVERNMENT_ADMIN','AMBULANCE_DRIVER']}><LiveFleet /></Guard>} /><Route path="/help" element={<Guided />} /><Route path="/schemes" element={<Schemes />} />
     <Route path="/login" element={<Auth mode="login" />} /><Route path="/forgot" element={<Forgot />} /><Route path="/otp" element={<OtpLogin />} /><Route path="/place" element={<Place />} /><Route path="/offline-data" element={<OfflineData />} />
-    <Route path="/saved" element={<Guard><Saved /></Guard>} /><Route path="/notifications" element={<Guard><Notifications /></Guard>} /><Route path="/doctor" element={<Guard roles={['DOCTOR']}><DoctorDash /></Guard>} /><Route path="/hospital" element={<Guard roles={['HOSPITAL_ADMIN']}><HospitalDash /></Guard>} />
-    <Route path="/appointments" element={<Guard roles={['PATIENT']}><Appointments /></Guard>} /><Route path="/settings" element={<Guard><Settings /></Guard>} />
+    <Route path="/saved" element={<Guard><Saved /></Guard>} /><Route path="/notifications" element={<Guard><Notifications /></Guard>} /><Route path="/doctor" element={<Guard roles={['DOCTOR']}><DoctorDash /></Guard>} /><Route path="/hospital" element={<Guard roles={['HOSPITAL_ADMIN']}><HospitalDash /></Guard>} /><Route path="/driver" element={<Guard roles={['AMBULANCE_DRIVER']}><DriverDash /></Guard>} />
+    <Route path="/profile" element={<Guard><Profile /></Guard>} /><Route path="/appointments" element={<Guard roles={['PATIENT']}><Appointments /></Guard>} /><Route path="/identity" element={<Guard roles={['DOCTOR', 'HOSPITAL_ADMIN', 'GOVERNMENT_ADMIN', 'SUPER_ADMIN']}><><h2>Identity verification</h2><IdentityPanel /></></Guard>} /><Route path="/settings" element={<Guard><Settings /></Guard>} />
     <Route path="/admin/tools" element={<Guard roles={['GOVERNMENT_ADMIN']}><AdminTools /></Guard>} />
+    <Route path="/admin/fleet" element={<Guard roles={['GOVERNMENT_ADMIN', 'HOSPITAL_ADMIN']}><FleetPanel /></Guard>} />
     <Route path="/hospitals/:id" element={<HospitalDetail />} /><Route path="/about" element={<Info page="about" />} /><Route path="/how-it-works" element={<Info page="how" />} /><Route path="/emergency-info" element={<Info page="emergencyinfo" />} /><Route path="/services" element={<Info page="services" />} />
     <Route path="/register" element={<Auth mode="register" />} />
     <Route path="/complaints" element={<Guard><Complaints /></Guard>} /><Route path="/admin" element={<Guard roles={['GOVERNMENT_ADMIN']}><Admin /></Guard>} />

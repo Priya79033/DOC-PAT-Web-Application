@@ -50,7 +50,27 @@ export const upload = multer({
 export const scanFile = async (file) => true; // TODO: integrate ClamAV / cloud scanner
 
 // Notification provider abstraction (swap in Twilio / FCM / Indian SMS gateway)
-export const providers = { email: async () => {}, sms: async () => {}, push: async () => {} };
+export const providers = {
+  email: async (to, subject, text) => {
+    if (!process.env.EMAIL_WEBHOOK_URL) {
+      if (process.env.NODE_ENV === 'production') throw new HttpError(503, 'Email delivery is not configured');
+      return;
+    }
+    const response = await fetch(process.env.EMAIL_WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(process.env.EMAIL_WEBHOOK_TOKEN && { Authorization: `Bearer ${process.env.EMAIL_WEBHOOK_TOKEN}` }) }, body: JSON.stringify({ to, subject, text }) });
+    if (!response.ok) throw new HttpError(502, 'Email delivery failed');
+  },
+  sms: async (to, _subject, body) => {
+    const { TWILIO_ACCOUNT_SID: sid, TWILIO_AUTH_TOKEN: token, TWILIO_FROM_NUMBER: from } = process.env;
+    if (!sid || !token || !from) {
+      if (process.env.NODE_ENV === 'production') throw new HttpError(503, 'SMS delivery is not configured');
+      return;
+    }
+    const form = new URLSearchParams({ To: to, From: from, Body: body });
+    const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages.json`, { method: 'POST', headers: { Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: form });
+    if (!response.ok) throw new HttpError(502, 'SMS delivery failed');
+  },
+  push: async () => {},
+};
 export const notify = async (userId, title, body, channels = []) => {
   await Notification.create({ user: userId, title, body });
   await Promise.all(channels.map((c) => providers[c]?.(userId, title, body)));

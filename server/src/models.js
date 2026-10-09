@@ -5,17 +5,22 @@ const point = { type: { type: String, enum: ['Point'], default: 'Point' }, coord
 const stamp = { status: { type: String, enum: ['AVAILABLE', 'LIMITED', 'FULL'], default: 'FULL' }, updatedAt: { type: Date, default: Date.now }, source: { type: String, default: 'hospital' }, verified: { type: Boolean, default: false } };
 const ref = (n) => ({ type: Schema.Types.ObjectId, ref: n });
 
-export const ROLES = ['PATIENT', 'DOCTOR', 'HOSPITAL_ADMIN', 'GOVERNMENT_ADMIN', 'SUPER_ADMIN'];
+export const ROLES = ['PATIENT', 'DOCTOR', 'HOSPITAL_ADMIN', 'AMBULANCE_DRIVER', 'GOVERNMENT_ADMIN', 'SUPER_ADMIN'];
 export const User = model('User', new Schema({
   name: { type: String, required: true }, email: { type: String, unique: true, sparse: true, lowercase: true },
   phone: { type: String, unique: true, sparse: true }, passwordHash: { type: String, required: true },
+  bio: { type: String, maxlength: 280 }, location: { type: String, maxlength: 120 },
   role: { type: String, enum: ROLES, default: 'PATIENT' }, tokenVersion: { type: Number, default: 0 },
+  age: { type: Number, min: 0, max: 120 }, gender: { type: String, enum: ['FEMALE', 'MALE', 'OTHER', 'PREFER_NOT_TO_SAY'] }, bloodGroup: { type: String, enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] },
+  // Store only verification outcomes and opaque provider references, never Aadhaar/PAN numbers or documents.
+  identityChecks: { aadhaar: { status: { type: String, enum: ['NOT_STARTED', 'PENDING', 'VERIFIED', 'REJECTED'], default: 'NOT_STARTED' }, checkedAt: Date, providerRef: String }, pan: { status: { type: String, enum: ['NOT_STARTED', 'PENDING', 'VERIFIED', 'REJECTED'], default: 'NOT_STARTED' }, checkedAt: Date, providerRef: String }, digilocker: { status: { type: String, enum: ['NOT_STARTED', 'PENDING', 'VERIFIED', 'REJECTED'], default: 'NOT_STARTED' }, checkedAt: Date, providerRef: String }, submittedAt: Date, consentAt: Date },
   hospital: ref('Hospital'), suspended: { type: Boolean, default: false }, language: { type: String, default: 'en' }, deletedAt: Date }, T));
 
 const hs = new Schema({
-  name: { type: String, required: true }, type: { type: String, enum: ['GOVERNMENT', 'PRIVATE'] },
+  name: { type: String, required: true }, licenseNumber: { type: String, trim: true, unique: true, sparse: true }, type: { type: String, enum: ['GOVERNMENT', 'PRIVATE'] },
   address: String, area: String, city: String, state: String, pincode: String, country: { type: String, default: 'India' },
   phone: String, emergencyPhone: String, location: point, departments: [String], facilities: [String], schemes: [String],
+  verificationDocuments: { type: [{ path: String, mime: String, name: String, uploadedAt: { type: Date, default: Date.now } }], select: false },
   hours: String, emergency: { type: Boolean, default: false }, verified: { type: Boolean, default: false },
   beds: { general: stamp, icu: stamp, emergency: stamp, pediatric: stamp, maternity: stamp },
   prices: [{ service: String, amount: Number, rule: String, updatedAt: { type: Date, default: Date.now }, verified: Boolean }], deletedAt: Date }, T);
@@ -33,8 +38,14 @@ bb.index({ location: '2dsphere' });
 bb.index({ country: 1, state: 1, district: 1, region: 1 });
 export const BloodBank = model('BloodBank', bb);
 
-const am = new Schema({ vehicleId: { type: String, unique: true }, type: String, agency: String, phone: String, equipment: [String],
-  available: { type: Boolean, default: true }, location: point, updatedAt: { type: Date, default: Date.now } });
+const site = new Schema({ name: { type: String, required: true }, hospital: ref('Hospital'), address: String,
+  location: point, radiusMeters: { type: Number, default: 150, min: 25, max: 5000 }, active: { type: Boolean, default: true } }, T);
+site.index({ location: '2dsphere' });
+export const Site = model('Site', site);
+const am = new Schema({ vehicleId: { type: String, unique: true }, plateNumber: { type: String, unique: true, sparse: true }, type: String, agency: String, phone: String, equipment: [String],
+  hospital: ref('Hospital'), site: ref('Site'), crew: String, driver: ref('User'), driverInviteHash: String, driverInviteExpiresAt: Date,
+  status: { type: String, enum: ['AVAILABLE', 'DISPATCHED', 'ON_SITE', 'MAINTENANCE'], default: 'AVAILABLE' },
+  available: { type: Boolean, default: true }, location: point, updatedAt: { type: Date, default: Date.now } }, T);
 am.index({ location: '2dsphere' });
 export const Ambulance = model('Ambulance', am);
 
@@ -55,6 +66,11 @@ export const Review = model('Review', new Schema({
 export const Message = model('Message', new Schema({
   appointment: { ...ref('Appointment'), required: true }, from: { ...ref('User'), required: true },
   to: { ...ref('User'), required: true }, text: { type: String, required: true, maxlength: 1000 },
+}, T));
+
+export const RoleInvite = model('RoleInvite', new Schema({
+  tokenHash: { type: String, unique: true, required: true }, role: { type: String, enum: ['GOVERNMENT_ADMIN', 'SUPER_ADMIN'], required: true },
+  createdBy: ref('User'), expiresAt: { type: Date, required: true }, usedAt: Date,
 }, T));
 
 export const Complaint = model('Complaint', new Schema({

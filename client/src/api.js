@@ -7,7 +7,7 @@ function writeQueue(q) { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }
 export async function pendingCount() { return readQueue().length; }
 
 async function request(path, options = {}, retried = false) {
-  const headers = { 'X-Requested-With': 'healthconnect', ...(options.headers || {}) };
+  const headers = { 'X-Requested-With': 'healthconnect', ...(localStorage.low === '1' ? { 'Save-Data': 'on' } : {}), ...(options.headers || {}) };
   let body = options.body;
   if (body && !(body instanceof FormData)) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(body); }
   const response = await fetch(API + path, { method: options.method || 'GET', credentials: 'include', headers, body: options.form || body });
@@ -24,6 +24,9 @@ export const api = request;
 
 export async function cachedGet(path) {
   const key = CACHE_PREFIX + path;
+  if (localStorage.low === '1') {
+    try { const saved = JSON.parse(localStorage.getItem(key)); if (saved) return { data: saved.data, fromCache: true, cachedAt: saved.at }; } catch { /* ignore corrupt cache */ }
+  }
   try {
     const data = await request(path);
     localStorage.setItem(key, JSON.stringify({ at: Date.now(), data }));

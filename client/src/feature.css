@@ -1,0 +1,35 @@
+.hospital-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.hospital-columns > section { min-width: 0; }
+.account-menu { position: relative; margin-left: auto; }
+.account-avatar { display: inline-grid; place-items: center; width: 42px; height: 42px; flex: 0 0 42px; border: 1px solid #bfd8fa; border-radius: 50%; background: linear-gradient(145deg,#d8ebff,#a9ceff); color: #174b91; font-weight: 800; cursor: pointer; }
+.account-avatar-large { width: 48px; height: 48px; flex-basis: 48px; cursor: default; }
+.account-popover { position: absolute; z-index: 20; top: calc(100% + .6rem); right: 0; width: min(320px, calc(100vw - 1.5rem)); padding: .65rem; border: 1px solid #dce7f5; border-radius: 16px; background: #fff; box-shadow: 0 18px 48px #173b6626; }
+.account-summary { display: flex; align-items: center; gap: .8rem; padding: .75rem; border-bottom: 1px solid var(--line); }
+.account-summary div { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+.account-summary b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-summary small { color: var(--muted); text-transform: capitalize; }
+.account-links { display: grid; gap: .2rem; padding: .55rem 0; border-bottom: 1px solid var(--line); }
+.account-links a { display: flex; gap: .75rem; align-items: center; padding: .65rem .75rem; border-radius: 9px; color: var(--ink); text-decoration: none; font-weight: 500; }
+.account-links a:hover,.account-links a:focus-visible { background: var(--soft); }
+.account-signout { width: 100%; padding: .7rem .75rem; border: 0; border-radius: 9px; background: transparent; color: var(--ink); text-align: left; }
+.account-signout:hover { background: #fff1ef; color: #a53220; }
+.profile-heading { display: flex; align-items: center; gap: 1.1rem; padding: 1.5rem; }
+.profile-avatar { width: 76px; height: 76px; flex-basis: 76px; font-size: 1.35rem; cursor: default; }
+.profile-heading h2 { margin: 0; }
+.profile-heading p { margin: .35rem 0 0; }
+.profile-heading > .big { margin-left: auto; }
+.profile-columns { display: grid; grid-template-columns: minmax(220px,.75fr) minmax(0,1.7fr); gap: 1rem; align-items: start; }
+.profile-shortcuts { display: grid; gap: .65rem; }
+.profile-shortcuts a { color: var(--deep); text-decoration: none; }
+.profile-columns form h3 { margin-top: .25rem; }
+.profile-columns form .b { margin-top: 1rem; }
+@media (max-width: 720px) {
+  .hospital-columns { grid-template-columns: 1fr; }
+  .profile-columns { grid-template-columns: 1fr; }
+  .profile-heading { flex-wrap: wrap; }
+  .profile-heading > .big { margin-left: 0; }
+}
