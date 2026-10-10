@@ -83,6 +83,19 @@ export const Complaint = model('Complaint', new Schema({
 
 export const Audit = model('Audit', new Schema({ user: Schema.Types.ObjectId, action: String, target: String, meta: Object, ip: String }, T));
 export const Scheme = model('Scheme', new Schema({ title: String, body: String, region: String, publishedBy: Schema.Types.ObjectId }, T));
+const medicine = new Schema({
+  name: { type: String, required: true, trim: true, maxlength: 160, index: true },
+  genericName: { type: String, required: true, trim: true, maxlength: 160, index: true },
+  strength: { type: String, trim: true, maxlength: 80 }, form: { type: String, trim: true, maxlength: 80 },
+  uses: { type: String, required: true, maxlength: 1200 }, benefits: { type: String, maxlength: 1200 },
+  sideEffects: { type: String, maxlength: 1200 }, prerequisites: { type: String, maxlength: 1200 },
+  prescription: { type: String, enum: ['REQUIRED', 'NOT_REQUIRED', 'ASK_PHARMACIST', 'UNKNOWN'], default: 'UNKNOWN' },
+  priceInr: { type: Number, min: 0 }, priceBasis: { type: String, enum: ['PMBJP_MRP', 'NPPA_CEILING', 'NPPA_RETAIL_PRICE', 'OTHER_OFFICIAL'] },
+  pack: { type: String, trim: true, maxlength: 100 }, sourceUrl: { type: String, trim: true, maxlength: 500 },
+  sourceName: { type: String, trim: true, maxlength: 160 }, verifiedAt: Date, verifiedBy: ref('User'), active: { type: Boolean, default: true },
+}, T);
+medicine.index({ name: 'text', genericName: 'text', uses: 'text' });
+export const Medicine = model('Medicine', medicine);
 export const Notification = model('Notification', new Schema({ user: ref('User'), title: String, body: String, read: { type: Boolean, default: false } }, T));
 
 const otp = new Schema({

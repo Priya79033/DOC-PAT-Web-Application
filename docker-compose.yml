@@ -17,6 +17,7 @@ services:
       MONGO_URI: mongodb://mongo:27017/doc-pat
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in your environment}
       CLIENT_URL: ${CLIENT_URL:-http://localhost:5173}
+      DATA_GOV_IN_API_KEY: ${DATA_GOV_IN_API_KEY:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}

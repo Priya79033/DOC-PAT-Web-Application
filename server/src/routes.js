@@ -11,6 +11,8 @@ const stale = (d, h = 6) => !d || Date.now() - new Date(d).getTime() > h * 36e5;
 const near = (q, max = 25000) => (q.lat && q.lng ? { location: { $near: { $geometry: { type: 'Point', coordinates: [+q.lng, +q.lat] }, $maxDistance: +q.radius || max } } } : {});
 const page = (q) => ({ skip: (Math.max(+q.page || 1, 1) - 1) * 20, limit: Math.min(+q.limit || 20, 50) });
 const exactText = (value) => new RegExp('^' + String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+let nationalDirectoryCount = { value: null, expires: 0 };
+const nationalDirectoryPages = new Map();
 
 // ---------- AUTH ----------
 const reg = z.object({ name: z.string().min(2), email: z.string().email().optional(), phone: z.string().regex(/^\+?\d{10,13}$/).optional(),
@@ -102,20 +104,61 @@ r.patch('/users/me', auth(), validate(z.object({
 // ---------- HOSPITALS ----------
 r.get('/hospitals', wrap(async (req, res) => {
   const q = req.query, f = { deletedAt: null, ...near(q) };
+  if (q.verified === 'true') f.verified = true;
+  if (q.verified === 'true') f.verified = true;
   if (q.type) f.type = q.type; if (q.emergency === 'true') f.emergency = true; if (q.country) f.country = new RegExp('^' + q.country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); if (q.state) f.state = new RegExp('^' + q.state.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); if (q.city) f.city = new RegExp('^' + q.city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
   if (q.area && q.area !== '__all__') f.area = new RegExp('^' + q.area.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); if (q.dept) f.departments = q.dept; if (q.scheme) f.schemes = q.scheme;
   if (q.beds === 'true') f['beds.general.status'] = { $ne: 'FULL' }; if (q.icu === 'true') f['beds.icu.status'] = { $ne: 'FULL' };
   if (q.q) f.$text = { $search: q.q };
-  const list = await M.Hospital.find(f, null, page(q)).lean();
+  const list = await M.Hospital.find(f, null, page(q)).sort({ name: 1, _id: 1 }).lean();
   ok(res, list.map((h) => ({ ...h, bedsStale: Object.values(h.beds || {}).some((b) => stale(b.updatedAt)) })));
 }));
+// Proxy the National Hospital Directory at data.gov.in. The API key stays on the server.
+// These are source directory records; they are not HealthConnect verification results.
+r.get('/national-hospitals', wrap(async (req, res) => {
+  const key = process.env.DATA_GOV_IN_API_KEY;
+  if (!key) throw new HttpError(503, 'National directory is not configured. Set DATA_GOV_IN_API_KEY on the server.');
+  const pageNo = Math.max(Number(req.query.page) || 1, 1), limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+  const cacheKey = JSON.stringify([pageNo, limit, req.query.state || '', req.query.district || '', req.query.hospital_name || req.query.q || '', req.query.town || req.query.city || '']);
+  const cached = nationalDirectoryPages.get(cacheKey);
+  if (cached?.expires > Date.now()) return ok(res, cached.value);
+  const params = new URLSearchParams({ 'api-key': key, format: 'json', offset: String((pageNo - 1) * limit), limit: String(limit) });
+  // OGD's National Hospital Directory resource. Values are encoded by URLSearchParams.
+  for (const field of ['state', 'district', 'hospital_name', 'town']) {
+    const value = String(req.query[field] || '').trim();
+    if (value) params.set(`filters[${field}]`, value);
+  }
+  if (req.query.city && !req.query.town) params.set('filters[town]', String(req.query.city).trim());
+  if (req.query.q && !req.query.hospital_name) params.set('filters[hospital_name]', String(req.query.q).trim());
+  const upstream = await fetch(`https://api.data.gov.in/resource/98fa254e-c5f8-4910-a19b-4828939b477d?${params}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(12000) });
+  if (!upstream.ok) throw new HttpError(upstream.status === 429 ? 503 : 502, upstream.status === 429 ? 'National directory is temporarily rate limited. Try again shortly.' : 'National directory could not be reached.');
+  const body = await upstream.json();
+  if (!Array.isArray(body.records)) throw new HttpError(502, body.message || 'National directory returned an unexpected response.');
+  const value = { records: body.records, total: Number(body.total) || null, page: pageNo, limit, source: 'National Hospital Directory · data.gov.in', sourceUpdated: '2025-06-02', sourceUrl: 'https://www.data.gov.in/resource/national-hospital-directory-geo-code-and-additional-parameters-updated-till-last-month' };
+  if (nationalDirectoryPages.size >= 30) nationalDirectoryPages.delete(nationalDirectoryPages.keys().next().value);
+  nationalDirectoryPages.set(cacheKey, { value, expires: Date.now() + 60e3 });
+  ok(res, value);
+}));
 r.get('/public/stats', wrap(async (_req, res) => {
-  const [doctors, hospitals, [ratings]] = await Promise.all([
+  const officialDirectoryCount = async () => {
+    if (nationalDirectoryCount.expires > Date.now()) return nationalDirectoryCount.value;
+    const key = process.env.DATA_GOV_IN_API_KEY;
+    if (!key) return null;
+    try {
+      const params = new URLSearchParams({ 'api-key': key, format: 'json', limit: '1', offset: '0' });
+      const response = await fetch(`https://api.data.gov.in/resource/98fa254e-c5f8-4910-a19b-4828939b477d?${params}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
+      if (!response.ok) { nationalDirectoryCount = { value: null, expires: Date.now() + 60e3 }; return null; }
+      const body = await response.json(), total = Number(body.total);
+      nationalDirectoryCount = { value: Number.isFinite(total) ? total : null, expires: Date.now() + 5 * 60e3 };
+      return nationalDirectoryCount.value;
+    } catch { nationalDirectoryCount = { value: null, expires: Date.now() + 60e3 }; return null; }
+  };
+  const [doctors, hospitalDirectoryRecords, [ratings]] = await Promise.all([
     M.Doctor.countDocuments({ verified: true }),
-    M.Hospital.countDocuments({ verified: true, deletedAt: null }),
-    M.Review.aggregate([{ $match: { hidden: false, 'scores.overall': { $gte: 1, $lte: 5 } } }, { $group: { _id: null, average: { $avg: '$scores.overall' }, count: { $sum: 1 } } }]),
+    officialDirectoryCount(),
+    M.Review.aggregate([{ $match: { hidden: { $ne: true }, 'scores.overall': { $gte: 1, $lte: 5 } } }, { $group: { _id: null, average: { $avg: '$scores.overall' }, count: { $sum: 1 } } }]),
   ]);
-  ok(res, { verifiedDoctors: doctors, verifiedHospitals: hospitals, patientRating: ratings ? +ratings.average.toFixed(1) : null, reviewCount: ratings?.count || 0 });
+  ok(res, { verifiedDoctors: doctors, hospitalDirectoryRecords, patientRating: ratings ? +ratings.average.toFixed(1) : null, reviewCount: ratings?.count || 0 });
 }));
 r.get('/hospitals/:id', wrap(async (req, res) => ok(res, await M.Hospital.findById(req.params.id).lean())));
 r.patch('/hospitals/:id/beds', auth(), allow('HOSPITAL_ADMIN', 'GOVERNMENT_ADMIN'), wrap(async (req, res) => {
@@ -136,7 +179,7 @@ r.get('/doctors', wrap(async (req, res) => {
   const q = req.query, f = {}; if (q.specialization) f.specialization = new RegExp(q.specialization, 'i'); if (q.hospital) f.hospital = q.hospital; if (q.language) f.languages = q.language;
   ok(res, await M.Doctor.find(f, null, page(q)).sort({ verified: -1, rating: -1, ratingCount: -1, experience: -1 }).populate('user', 'name').populate('hospital', 'name city').lean());
 }));
-r.get('/doctors/departments', wrap(async (_req, res) => ok(res, (await M.Doctor.distinct('specialization')).filter(Boolean).sort((a, b) => a.localeCompare(b))));
+r.get('/doctors/departments', wrap(async (_req, res) => ok(res, (await M.Doctor.distinct('specialization')).filter(Boolean).sort((a, b) => a.localeCompare(b)))));
 r.put('/doctors/me', auth(), allow('DOCTOR'), wrap(async (req, res) => {
   const { verified, rating, ratingCount, user, ...d } = req.body; // verification is admin-only
   ok(res, await M.Doctor.findOneAndUpdate({ user: req.user._id }, d, { upsert: true, new: true }), 'Profile saved');
@@ -340,6 +383,81 @@ r.get('/admin/price-outliers', ...admin, wrap(async (req, res) => { // flags pri
   hs.forEach((h) => h.prices.forEach((p) => (by[p.service] ||= []).push({ h: h.name, a: p.amount })));
   const out = []; for (const [s, v] of Object.entries(by)) { const m = v.map((x) => x.a).sort((a, b) => a - b)[Math.floor(v.length / 2)]; v.filter((x) => v.length > 2 && x.a > 2 * m).forEach((x) => out.push({ service: s, hospital: x.h, amount: x.a, median: m })); }
   ok(res, out);
+}));
+const medicineInput = z.object({ name: z.string().trim().min(2).max(160), genericName: z.string().trim().min(2).max(160), strength: z.string().trim().max(80).optional(), form: z.string().trim().max(80).optional(), uses: z.string().trim().min(10).max(1200), benefits: z.string().trim().max(1200).optional(), sideEffects: z.string().trim().max(1200).optional(), prerequisites: z.string().trim().max(1200).optional(), prescription: z.enum(['REQUIRED', 'NOT_REQUIRED', 'ASK_PHARMACIST', 'UNKNOWN']), priceInr: z.number().nonnegative().optional(), priceBasis: z.enum(['PMBJP_MRP', 'NPPA_CEILING', 'NPPA_RETAIL_PRICE', 'OTHER_OFFICIAL']).optional(), pack: z.string().trim().max(100).optional(), sourceUrl: z.string().url().max(500).optional(), sourceName: z.string().trim().max(160).optional(), verifiedAt: z.string().datetime().optional(), active: z.boolean().optional() }).refine((d) => d.priceInr === undefined || (d.priceBasis && d.sourceUrl && d.sourceName && d.verifiedAt), 'A price requires an official source, price basis and verification date');
+r.get('/medicines', wrap(async (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 100), filter = { active: true };
+  if (q) filter.$or = ['name', 'genericName', 'uses'].map((key) => ({ [key]: new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }));
+  ok(res, await M.Medicine.find(filter).sort('genericName name').limit(100).select('-verifiedBy').lean());
+}));
+r.get('/medicine-info', wrap(async (req, res) => {
+  const q = String(req.query.q || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  if (q.length < 2) return ok(res, { labels: [] });
+  const term = q.replace(/[\\"]+/g, ' ').trim();
+  if (/^(paracetamol|acetaminophen)(?:\s|$)/i.test(term)) {
+    return ok(res, { labels: [{
+      brand: 'Paracetamol (adult information)', generic: 'Paracetamol', ingredients: 'Paracetamol',
+      uses: 'Relief of pain and high temperature (fever), including headache, toothache, sore throat, and cold or flu symptoms.',
+      prerequisites: 'Adult information. Check the exact pack and strength. Ask a clinician or pharmacist first if you have had an allergy to paracetamol, have liver or kidney problems, weigh under 50 kg, or drink heavily. Do not combine it with other medicines that also contain paracetamol; taking too much can damage the liver.',
+      sideEffects: 'Side effects are rare when used correctly. Serious effects can include an allergic reaction, liver problems, or blood-cell problems. Get urgent medical advice after taking more than the pack says or if you develop a severe reaction.',
+      source: 'https://www.nhs.uk/medicines/paracetamol-for-adults/', sourceName: 'NHS adult medicine information',
+      sourceNotice: 'Adult guidance from the UK NHS; follow the leaflet supplied with your Indian product and ask a local clinician or pharmacist.',
+    }] });
+  }
+  const safeTerm = (value) => value.replace(/[\\"]+/g, ' ').trim().slice(0, 80);
+  const requests = (url) => fetch(url, { signal: AbortSignal.timeout(4500) }).then((response) => response.ok ? response.json() : null).catch(() => null);
+  const knownAliases = { paracetamol: ['acetaminophen'], acetaminophen: ['paracetamol'], salbutamol: ['albuterol'], albuterol: ['salbutamol'], frusemide: ['furosemide'], furosemide: ['frusemide'], lignocaine: ['lidocaine'], lidocaine: ['lignocaine'], adrenaline: ['epinephrine'], epinephrine: ['adrenaline'] };
+  const aliasTerms = knownAliases[term.toLowerCase()] || [];
+  let rxNames = [];
+  let labels = [];
+  // RxNorm normalizes international and alternate generic names (for example
+  // paracetamol to acetaminophen) before searching the FDA label index.
+  const [rx, directPayload] = await Promise.all([
+    requests(`https://rxnav.nlm.nih.gov/REST/rxcui.json?name=${encodeURIComponent(term)}&search=2`),
+    (async () => {
+      const terms = [term, ...aliasTerms].map(safeTerm).filter(Boolean);
+      const clauses = terms.flatMap((name) => [`openfda.brand_name:\"${name}\"`, `openfda.generic_name:\"${name}\"`]);
+      return requests(`https://api.fda.gov/drug/label.json?search=${encodeURIComponent(`(${clauses.join('+OR+')})`)}&limit=8`);
+    })(),
+  ]);
+  const rxcui = rx?.idGroup?.rxnormId?.[0];
+  if (rxcui) {
+    const related = await requests(`https://rxnav.nlm.nih.gov/REST/rxcui/${encodeURIComponent(rxcui)}/allrelated.json`);
+    rxNames = (related?.allRelatedGroup?.conceptGroup || []).filter((group) => ['IN', 'PIN'].includes(group.tty))
+      .flatMap((group) => group.conceptProperties || []).map((concept) => concept.name).filter(Boolean);
+  }
+  const terms = [...new Set([term, ...aliasTerms, ...rxNames].map(safeTerm).filter(Boolean))].slice(0, 6);
+  const clauses = terms.flatMap((name) => [`openfda.brand_name:\"${name}\"`, `openfda.generic_name:\"${name}\"`]);
+  const payload = directPayload?.results?.length ? directPayload : await requests(`https://api.fda.gov/drug/label.json?search=${encodeURIComponent(`(${clauses.join('+OR+')})`)}&limit=8`);
+  labels = (payload?.results || []).map((label) => {
+    const section = (key) => Array.isArray(label[key]) ? label[key].join('\n').slice(0, 5000) : '';
+    const openfda = label.openfda || {}, setid = openfda.spl_set_id?.[0];
+    return {
+      brand: openfda.brand_name?.[0] || '', generic: openfda.generic_name?.[0] || '',
+      ingredients: (openfda.substance_name || []).slice(0, 8).join(', '),
+      uses: section('indications_and_usage') || section('purpose') || section('description'),
+      prerequisites: ['contraindications', 'precautions', 'do_not_use', 'ask_doctor', 'ask_doctor_or_pharmacist'].map(section).filter(Boolean).join('\n\n'),
+      sideEffects: section('adverse_reactions') || section('side_effects'), warnings: section('warnings'),
+      source: setid ? `https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=${encodeURIComponent(setid)}` : 'https://open.fda.gov/apis/drug/label/',
+      sourceName: 'US FDA / DailyMed label',
+    };
+  }).filter((label) => label.uses || label.prerequisites || label.sideEffects || label.warnings);
+  ok(res, { labels });
+}));
+r.get('/admin/medicines', ...admin, wrap(async (_req, res) => ok(res, await M.Medicine.find().sort('genericName name').lean())));
+r.post('/admin/medicines', ...admin, wrap(async (req, res) => {
+  const d = medicineInput.parse(req.body);
+  const item = await M.Medicine.create({ ...d, verifiedAt: d.priceInr === undefined ? undefined : new Date(d.verifiedAt), verifiedBy: req.user._id });
+  await audit(req, 'MEDICINE_CREATE', item._id, { name: item.name, priceInr: item.priceInr, sourceName: item.sourceName });
+  ok(res, item, 'Medicine published', 201);
+}));
+r.patch('/admin/medicines/:id', ...admin, wrap(async (req, res) => {
+  const d = medicineInput.partial().parse(req.body);
+  if (d.priceInr !== undefined && !(d.priceBasis && d.sourceUrl && d.sourceName && d.verifiedAt)) throw new HttpError(400, 'A price requires an official source, price basis and verification date');
+  const item = await M.Medicine.findByIdAndUpdate(req.params.id, { ...d, ...(d.priceInr !== undefined && { verifiedAt: new Date(d.verifiedAt), verifiedBy: req.user._id }) }, { new: true, runValidators: true });
+  if (!item) throw new HttpError(404, 'Medicine not found');
+  await audit(req, 'MEDICINE_UPDATE', item._id, { name: item.name, priceInr: item.priceInr, sourceName: item.sourceName });
+  ok(res, item, 'Medicine updated');
 }));
 r.get('/schemes', wrap(async (_req, res) => {
   const published = await M.Scheme.find().sort('-createdAt').lean();
