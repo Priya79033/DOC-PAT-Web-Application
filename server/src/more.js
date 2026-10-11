@@ -6,7 +6,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import * as M from './models.js';
 import { ok, wrap, HttpError, auth, allow, validate, audit, setCookies, providers, upload, scanFile } from './lib.js';
-  import { children, INDIA_STATES, TREE } from './locations.js';
+import { children, INDIA_STATE_CAPITALS, INDIA_STATES, TREE } from './locations.js';
 import { inSlot } from './availability.js';
 const r = Router(), sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
@@ -120,6 +120,7 @@ r.get('/locations', wrap(async (req, res) => {
     return ok(res, { demo: false, items: {
       continent: ['Asia'], country: ['India'],
       state: clean([...INDIA_STATES, ...states]),
+      capitals: INDIA_STATE_CAPITALS,
       city: clean([...cities, ...Object.values(TREE?.Asia?.India || {}).flatMap((places) => Object.keys(places))]),
       area: clean([...areas, ...Object.values(TREE?.Asia?.India || {}).flatMap((places) => Object.values(places).flat())]),
     } });
@@ -131,7 +132,10 @@ r.get('/locations', wrap(async (req, res) => {
     else if (req.query.level === 'city') items = clean([...(await M.Hospital.distinct('city', { deletedAt: null })), ...Object.values(TREE?.Asia?.India || {}).flatMap((cities) => Object.keys(cities))]);
     else if (req.query.level === 'area') items = clean([...(await M.Hospital.distinct('area', { deletedAt: null })), ...Object.values(TREE?.Asia?.India || {}).flatMap((cities) => Object.values(cities).flat())]);
     else if (parts.length === 1 && parts[0] === 'Asia') items = ['India'];
-  else if (parts.length === 2 && parts[1] === 'India') items = clean([...INDIA_STATES, ...states, ...base]);
+  else if (parts.length === 2 && parts[1] === 'India') {
+    items = clean([...INDIA_STATES, ...states, ...base]);
+    return ok(res, { demo: false, items, capitals: INDIA_STATE_CAPITALS });
+  }
   else if (parts.length === 3 && parts[1] === 'India') {
     const state = new RegExp(`^${escapeRegex(parts[2])}$`, 'i');
     items = clean([...(await M.Hospital.distinct('city', { state, deletedAt: null })), ...base]);

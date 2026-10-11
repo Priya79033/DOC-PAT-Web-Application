@@ -10,18 +10,21 @@ const r = Router();
 const stale = (d, h = 6) => !d || Date.now() - new Date(d).getTime() > h * 36e5;
 const near = (q, max = 25000) => (q.lat && q.lng ? { location: { $near: { $geometry: { type: 'Point', coordinates: [+q.lng, +q.lat] }, $maxDistance: +q.radius || max } } } : {});
 const page = (q) => ({ skip: (Math.max(+q.page || 1, 1) - 1) * 20, limit: Math.min(+q.limit || 20, 50) });
-const exactText = (value) => new RegExp('^' + String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const exactText = (value) => new RegExp('^' + escapeRegex(value) + '$', 'i');
 let nationalDirectoryCount = { value: null, expires: 0 };
 const nationalDirectoryPages = new Map();
 
 // ---------- AUTH ----------
 const reg = z.object({ name: z.string().min(2), email: z.string().email().optional(), phone: z.string().regex(/^\+?\d{10,13}$/).optional(),
-  password: z.string().min(8), role: z.enum(['PATIENT', 'DOCTOR', 'HOSPITAL_ADMIN', 'AMBULANCE_DRIVER', 'GOVERNMENT_ADMIN', 'SUPER_ADMIN']).default('PATIENT'), inviteToken: z.string().optional(), identityConsent: z.boolean().optional(),
+  password: z.string().min(8), role: z.enum(['PATIENT', 'DOCTOR', 'HOSPITAL_ADMIN', 'AMBULANCE_DRIVER', 'GOVERNMENT_ADMIN', 'SUPER_ADMIN']).default('PATIENT'), inviteToken: z.string().optional(), identityConsent: z.boolean().optional(), driverPhonePublicConsent: z.boolean().optional(),
   patientProfile: z.object({ age: z.number().int().min(0).max(120), gender: z.enum(['FEMALE', 'MALE', 'OTHER', 'PREFER_NOT_TO_SAY']), bloodGroup: z.enum(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']).optional() }).optional(),
   driverProfile: z.object({ vehicleId: z.string().min(2), inviteToken: z.string().min(16) }).optional(),
   doctorProfile: z.object({ qualification: z.string().min(2), specialization: z.string().min(2), licenseNo: z.string().min(3), experience: z.number().int().min(0).max(80), hospital: z.string().min(1), fee: z.number().nonnegative().optional() }).optional(),
   hospitalProfile: z.object({ name: z.string().min(2), licenseNumber: z.string().min(3), type: z.enum(['GOVERNMENT', 'PRIVATE']), city: z.string().min(2), area: z.string().optional(), phone: z.string().optional(), lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) }).optional()
 }).refine((d) => d.email || d.phone, 'email or phone required')
+  .refine((d) => d.role !== 'AMBULANCE_DRIVER' || !!d.phone, 'Ambulance driver contact phone is required')
+  .refine((d) => d.role !== 'AMBULANCE_DRIVER' || d.driverPhonePublicConsent === true, 'Consent to share the driver phone in the public ambulance directory is required')
   .refine((d) => ['PATIENT', 'AMBULANCE_DRIVER'].includes(d.role) || d.identityConsent === true, 'Identity review consent is required for this account role')
   .refine((d) => d.role !== 'PATIENT' || !!d.patientProfile, 'Patient age and gender are required')
   .refine((d) => d.role === 'PATIENT' || !d.patientProfile, 'Patient details are only valid for patient accounts')
@@ -32,7 +35,7 @@ const reg = z.object({ name: z.string().min(2), email: z.string().email().option
   .refine((d) => d.role === 'DOCTOR' || !d.doctorProfile, 'Doctor details are only valid for doctor accounts')
   .refine((d) => d.role === 'HOSPITAL_ADMIN' || !d.hospitalProfile, 'Hospital details are only valid for hospital-admin accounts');
 r.post('/auth/register', validate(reg), wrap(async (req, res) => {
-  const { password, inviteToken, identityConsent, patientProfile, driverProfile, doctorProfile, hospitalProfile, ...d } = req.body;
+  const { password, inviteToken, identityConsent, driverPhonePublicConsent, patientProfile, driverProfile, doctorProfile, hospitalProfile, ...d } = req.body;
   if (doctorProfile && !(await M.Hospital.exists({ _id: doctorProfile.hospital, verified: true, deletedAt: null }))) throw new HttpError(400, 'Choose an approved registered hospital');
   let invite;
   if (['GOVERNMENT_ADMIN', 'SUPER_ADMIN'].includes(d.role)) {
@@ -45,7 +48,7 @@ r.post('/auth/register', validate(reg), wrap(async (req, res) => {
   const identityChecks = authorized ? { aadhaar: { status: 'PENDING' }, pan: { status: 'PENDING' }, digilocker: { status: 'PENDING' }, submittedAt, consentAt: submittedAt } : undefined;
   let u, createdHospital, assignedAmbulance;
   try {
-    u = await M.User.create({ ...d, ...(patientProfile || {}), identityChecks, passwordHash: await bcrypt.hash(password, 12) });
+    u = await M.User.create({ ...d, ...(patientProfile || {}), ...(driverPhonePublicConsent && { publicPhoneConsentAt: new Date() }), identityChecks, passwordHash: await bcrypt.hash(password, 12) });
     if (doctorProfile) await M.Doctor.create({ ...doctorProfile, user: u._id });
     if (driverProfile) {
       const inviteHash = crypto.createHash('sha256').update(driverProfile.inviteToken).digest('hex');
@@ -176,7 +179,7 @@ r.put('/hospitals/:id/prices', auth(), allow('HOSPITAL_ADMIN'), wrap(async (req,
 
 // ---------- DOCTORS ----------
 r.get('/doctors', wrap(async (req, res) => {
-  const q = req.query, f = {}; if (q.specialization) f.specialization = new RegExp(q.specialization, 'i'); if (q.hospital) f.hospital = q.hospital; if (q.language) f.languages = q.language;
+  const q = req.query, f = {}; if (q.specialization) f.specialization = new RegExp(escapeRegex(q.specialization), 'i'); if (q.hospital) f.hospital = q.hospital; if (q.language) f.languages = q.language;
   ok(res, await M.Doctor.find(f, null, page(q)).sort({ verified: -1, rating: -1, ratingCount: -1, experience: -1 }).populate('user', 'name').populate('hospital', 'name city').lean());
 }));
 r.get('/doctors/departments', wrap(async (_req, res) => ok(res, (await M.Doctor.distinct('specialization')).filter(Boolean).sort((a, b) => a.localeCompare(b)))));
@@ -186,18 +189,44 @@ r.put('/doctors/me', auth(), allow('DOCTOR'), wrap(async (req, res) => {
 }));
 
 // ---------- BLOOD & AMBULANCE ----------
+r.get('/blood/locations', wrap(async (req, res) => {
+  const filter = {};
+  if (req.query.state) filter.state = exactText(req.query.state);
+  const regions = req.query.state ? await M.BloodBank.distinct('region', filter) : [];
+  ok(res, { regions: regions.filter(Boolean).sort() });
+}));
 r.get('/blood', wrap(async (req, res) => {
   const f = { ...near(req.query, 50000) };
   for (const key of ['country', 'state', 'district', 'region']) if (req.query[key]) f[key] = exactText(req.query[key]);
   if (req.query.city) f.city = exactText(req.query.city);
   if (req.query.q) f.name = new RegExp(String(req.query.q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
   const banks = await M.BloodBank.find(f, null, page(req.query)).lean();
-  ok(res, banks.map((b) => ({ ...b, inventory: req.query.group ? b.inventory.filter((i) => i.group === req.query.group) : b.inventory,
-    notice: 'Availability is subject to confirmation from the blood bank.' })));
+  ok(res, banks.map((b) => {
+    const selectedGroup = req.query.group && b.inventory.find((item) => item.group === req.query.group);
+    return {
+      ...b,
+      inventory: req.query.group ? b.inventory.filter((item) => item.group === req.query.group) : b.inventory,
+      ...(req.query.group && { selectedAvailability: {
+        group: req.query.group,
+        units: selectedGroup?.units ?? 0,
+        status: !selectedGroup || selectedGroup.units == null ? 'NOT_REPORTED' : selectedGroup.units > 0 ? 'AVAILABLE' : 'NOT_AVAILABLE',
+        updatedAt: selectedGroup?.updatedAt ?? null,
+      } }),
+      notice: 'Inventory changes quickly. Call the blood bank to confirm availability.',
+    };
+  }));
 }));
 r.get('/ambulances', wrap(async (req, res) => {
   const list = await M.Ambulance.find({ available: true, ...near(req.query, 30000) }).limit(20).lean();
   ok(res, list.map((a) => ({ _id: a._id, vehicleId: a.vehicleId, type: a.type, agency: a.agency, phone: a.phone, status: a.status, updatedAt: a.updatedAt, approxLocation: a.location.coordinates.map((n) => +n.toFixed(2)) })));
+}));
+r.get('/ambulances/directory', wrap(async (_req, res) => {
+  const fleet = await M.Ambulance.find({}).select('vehicleId plateNumber type agency phone status updatedAt shift driver')
+    .populate('driver', 'name phone publicPhoneConsentAt').sort('vehicleId').lean();
+  ok(res, fleet.map(({ driver, ...ambulance }) => ({
+    ...ambulance,
+    driver: driver ? { name: driver.name, ...(driver.publicPhoneConsentAt && driver.phone && { phone: driver.phone }) } : null,
+  })));
 }));
 // Exact fleet coordinates are private but available to signed-in patients, doctors and staff.
 r.get('/ambulances/live', auth(), wrap(async (req, res) => {
@@ -220,7 +249,7 @@ r.get('/ambulances/fleet', ...fleetAccess, wrap(async (req, res) => {
   ok(res, fleet.map(({ driverInviteHash, driverInviteExpiresAt, ...a }) => ({ ...a, driverInvitePending: !!driverInviteHash && driverInviteExpiresAt > new Date() })));
 }));
 r.post('/ambulances/fleet', ...fleetAccess, wrap(async (req, res) => {
-  const d = z.object({ vehicleId: z.string().min(2).max(40), plateNumber: z.string().min(3).max(20), type: z.string().min(2), agency: z.string().min(2), phone: z.string().min(3), equipment: z.array(z.string()).default([]), crew: z.string().optional(), site: z.string().optional(), hospital: z.string().optional(), lat: z.number().min(-90).max(90).optional(), lng: z.number().min(-180).max(180).optional() }).parse(req.body);
+  const d = z.object({ vehicleId: z.string().min(2).max(40), plateNumber: z.string().min(3).max(20), type: z.string().min(2), agency: z.string().min(2), phone: z.string().min(3), equipment: z.array(z.string()).default([]), crew: z.string().optional(), site: z.string().optional(), hospital: z.string().optional(), shift: z.object({ days: z.array(z.number().int().min(0).max(6)).min(1), startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), timezone: z.literal('Asia/Kolkata').default('Asia/Kolkata') }).refine((shift) => shift.startTime !== shift.endTime, 'Shift start and end times must differ'), lat: z.number().min(-90).max(90).optional(), lng: z.number().min(-180).max(180).optional() }).parse(req.body);
   const hospital = req.user.role === 'HOSPITAL_ADMIN' ? req.user.hospital : d.hospital;
   if (req.user.role === 'HOSPITAL_ADMIN' && !hospital) throw new HttpError(403, 'Register and verify a hospital before adding vehicles');
   if (d.site && !(await M.Site.exists({ _id: d.site, active: true, ...(hospital ? { hospital } : {}) }))) throw new HttpError(400, 'Choose an active site belonging to this hospital');
@@ -264,7 +293,15 @@ r.patch('/ambulances/:id/location', ...fleetAccess, wrap(async (req, res) => {
 }));
 r.get('/driver/me', auth(), allow('AMBULANCE_DRIVER'), wrap(async (req, res) => {
   const vehicle = await M.Ambulance.findOne({ driver: req.user._id }).select('-driverInviteHash -driverInviteExpiresAt').populate('site', 'name address radiusMeters').populate('hospital', 'name city').lean();
-  if (!vehicle) throw new HttpError(404, 'No ambulance is paired with this driver account'); ok(res, vehicle);
+  if (!vehicle) throw new HttpError(404, 'No ambulance is paired with this driver account');
+  ok(res, { ...vehicle, driverContactPhone: req.user.phone, driverPhonePublicConsent: !!req.user.publicPhoneConsentAt });
+}));
+r.patch('/driver/public-contact', auth(), allow('AMBULANCE_DRIVER'), wrap(async (req, res) => {
+  const { share } = z.object({ share: z.boolean() }).parse(req.body);
+  if (share && !req.user.phone) throw new HttpError(400, 'Add a phone number to your driver account before sharing it');
+  await M.User.updateOne({ _id: req.user._id }, { $set: { publicPhoneConsentAt: share ? new Date() : null } });
+  await audit(req, share ? 'DRIVER_PHONE_PUBLIC_CONSENT' : 'DRIVER_PHONE_PUBLIC_CONSENT_REVOKED', req.user._id);
+  ok(res, { shared: share }, share ? 'Driver phone is listed in the public ambulance directory' : 'Driver phone was removed from the public ambulance directory');
 }));
 r.patch('/driver/location', auth(), allow('AMBULANCE_DRIVER'), wrap(async (req, res) => {
   const d = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) }).parse(req.body);
@@ -300,9 +337,14 @@ r.get('/emergency/requests/:id', auth(), wrap(async (req, res) => {
 }));
 r.patch('/ambulances/:id', auth(), allow('HOSPITAL_ADMIN', 'GOVERNMENT_ADMIN'), wrap(async (req, res) => {
   const a = await M.Ambulance.findById(req.params.id); if (!a || !belongsToHospital(req.user, a.hospital)) throw new HttpError(404, 'Ambulance not found');
-  const status = z.enum(['AVAILABLE', 'DISPATCHED', 'ON_SITE', 'MAINTENANCE']).parse(req.body.status || (req.body.available ? 'AVAILABLE' : 'MAINTENANCE'));
-  a.status = status; a.available = status === 'AVAILABLE' || status === 'ON_SITE';
-  if (!a.available) a.site = null; a.updatedAt = new Date(); await a.save(); publishFleetUpdate(a._id); ok(res, a, 'Fleet status updated');
+  const d = z.object({ status: z.enum(['AVAILABLE', 'DISPATCHED', 'ON_SITE', 'MAINTENANCE']).optional(), shift: z.object({ days: z.array(z.number().int().min(0).max(6)).min(1), startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), timezone: z.literal('Asia/Kolkata').default('Asia/Kolkata') }).refine((shift) => shift.startTime !== shift.endTime, 'Shift start and end times must differ').optional() }).refine((value) => value.status || value.shift, 'Provide a status or shift schedule').parse(req.body);
+  if (d.status) {
+    a.status = d.status; a.available = d.status === 'AVAILABLE' || d.status === 'ON_SITE';
+    if (!a.available) a.site = null;
+  }
+  if (d.shift) a.shift = d.shift;
+  a.updatedAt = new Date(); await a.save(); publishFleetUpdate(a._id); await audit(req, d.shift ? 'AMBULANCE_SHIFT_UPDATE' : 'AMBULANCE_STATUS_UPDATE', a._id);
+  ok(res, a, d.shift ? 'Driver shift schedule updated' : 'Fleet status updated');
 }));
 
 // ---------- APPOINTMENTS & REVIEWS ----------

@@ -14,7 +14,7 @@ export const User = model('User', new Schema({
   age: { type: Number, min: 0, max: 120 }, gender: { type: String, enum: ['FEMALE', 'MALE', 'OTHER', 'PREFER_NOT_TO_SAY'] }, bloodGroup: { type: String, enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] },
   // Store only verification outcomes and opaque provider references, never Aadhaar/PAN numbers or documents.
   identityChecks: { aadhaar: { status: { type: String, enum: ['NOT_STARTED', 'PENDING', 'VERIFIED', 'REJECTED'], default: 'NOT_STARTED' }, checkedAt: Date, providerRef: String }, pan: { status: { type: String, enum: ['NOT_STARTED', 'PENDING', 'VERIFIED', 'REJECTED'], default: 'NOT_STARTED' }, checkedAt: Date, providerRef: String }, digilocker: { status: { type: String, enum: ['NOT_STARTED', 'PENDING', 'VERIFIED', 'REJECTED'], default: 'NOT_STARTED' }, checkedAt: Date, providerRef: String }, submittedAt: Date, consentAt: Date },
-  hospital: ref('Hospital'), suspended: { type: Boolean, default: false }, language: { type: String, default: 'en' }, deletedAt: Date }, T));
+  hospital: ref('Hospital'), publicPhoneConsentAt: Date, suspended: { type: Boolean, default: false }, language: { type: String, default: 'en' }, deletedAt: Date }, T));
 
 const hs = new Schema({
   name: { type: String, required: true }, licenseNumber: { type: String, trim: true, unique: true, sparse: true }, type: { type: String, enum: ['GOVERNMENT', 'PRIVATE'] },
@@ -44,6 +44,7 @@ site.index({ location: '2dsphere' });
 export const Site = model('Site', site);
 const am = new Schema({ vehicleId: { type: String, unique: true }, plateNumber: { type: String, unique: true, sparse: true }, type: String, agency: String, phone: String, equipment: [String],
   hospital: ref('Hospital'), site: ref('Site'), crew: String, driver: ref('User'), driverInviteHash: String, driverInviteExpiresAt: Date,
+  shift: { days: [{ type: Number, min: 0, max: 6 }], startTime: String, endTime: String, timezone: { type: String, default: 'Asia/Kolkata' } },
   status: { type: String, enum: ['AVAILABLE', 'DISPATCHED', 'ON_SITE', 'MAINTENANCE'], default: 'AVAILABLE' },
   available: { type: Boolean, default: true }, location: point, updatedAt: { type: Date, default: Date.now } }, T);
 am.index({ location: '2dsphere' });

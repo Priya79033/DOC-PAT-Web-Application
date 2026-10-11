@@ -55,7 +55,7 @@ function Layout({ children }) {
         {user ? <div className="account-menu"><button type="button" className="account-avatar" aria-label={lang === 'hi' ? 'खाता मेनू खोलें' : 'Open account menu'} aria-expanded={accountOpen} onClick={() => setAccountOpen((open) => !open)}>{initials}</button>{accountOpen && <div className="account-popover"><div className="account-summary"><span className="account-avatar account-avatar-large">{initials}</span><div><b>{user.name}</b><small>{user.role?.replaceAll('_', ' ').toLowerCase()}</small></div></div><div className="account-links"><Link onClick={() => setAccountOpen(false)} to="/profile">♙ <span>{lang === 'hi' ? 'प्रोफ़ाइल' : 'Profile'}</span></Link><Link onClick={() => setAccountOpen(false)} to="/settings">⚙ <span>{t('settings')}</span></Link></div><button className="account-signout" onClick={signOut}>{t('logout')}</button></div>}</div> : <Link className="header-login" to="/login">{t('login')}</Link>}
       </div>
       <nav className="primary-nav" aria-label={lang === 'hi' ? 'मुख्य नेविगेशन' : 'Main navigation'}>
-        <Link to="/">{t('home')}</Link><Link to="/doctors">{t('doctor')}</Link><Link to="/hospitals">{t('hospital')}</Link><Link to="/emergency">{t('emergency')}</Link><Link to="/roles">{t('roles')}</Link><Link to="/schemes">{t('schemes')}</Link><Link to="/medical">{lang === 'hi' ? 'दवाइयाँ' : 'Medical'}</Link><Link to="/place">{t('area')}</Link><Link to="/help">{lang === 'hi' ? 'मार्गदर्शित सहायता' : 'Guided help'}</Link>
+        <Link to="/">{t('home')}</Link><Link to="/doctors">{lang === 'hi' ? 'विभाग' : 'Departments'}</Link><Link to="/hospitals">{t('hospital')}</Link><Link to="/emergency">{t('emergency')}</Link><Link to="/roles">{t('roles')}</Link><Link to="/schemes">{t('schemes')}</Link><Link to="/medical">{lang === 'hi' ? 'दवाइयाँ' : 'Medical'}</Link><Link to="/place">{t('area')}</Link><Link to="/help">{lang === 'hi' ? 'मार्गदर्शित सहायता' : 'Guided help'}</Link>
         <details className="health-menu"><summary>{lang === 'hi' ? 'अन्य सेवाएँ' : 'More'}</summary><div className="health-menu-panel">
           <Link to="/complaints">{t('complaints')}</Link><Link to="/offline-data">{t('offlinePage')}</Link>
           {user?.role === 'PATIENT' && <Link to="/appointments">{t('appointments')}</Link>}
@@ -196,15 +196,15 @@ function Schemes() {
 }
 
 function Hospitals() {
-  const { t, low, lang } = useApp(), initialQuery = new URLSearchParams(location.search), [f, setF] = useState({ q: initialQuery.get('q') || '', city: initialQuery.get('city') || '', country: initialQuery.get('country') || '', source: initialQuery.get('source') || '', type: '', emergency: false, beds: initialQuery.get('beds') === 'true', icu: false, verified: initialQuery.get('verified') === 'true', page: Number(initialQuery.get('page') || 1) }), [pos, setPos] = useState(null), [locMsg, setLocMsg] = useState(''), [cities, setCities] = useState([]);
-  useEffect(() => { cachedGet('/locations?level=city').then((result) => setCities(result.data.items || [])).catch(() => setCities([])); }, []);
+  const { t, low, lang } = useApp(), initialQuery = new URLSearchParams(location.search), [f, setF] = useState({ q: initialQuery.get('q') || '', state: initialQuery.get('state') || '', country: initialQuery.get('country') || '', source: initialQuery.get('source') || '', type: '', emergency: false, beds: initialQuery.get('beds') === 'true', icu: false, verified: initialQuery.get('verified') === 'true', page: Number(initialQuery.get('page') || 1) }), [pos, setPos] = useState(null), [locMsg, setLocMsg] = useState(''), [states, setStates] = useState([]), [stateCapitals, setStateCapitals] = useState({});
+  useEffect(() => { api('/locations?path=Asia>India').then((result) => { setStates(result.items || []); setStateCapitals(result.capitals || {}); }).catch((error) => setLocMsg(`Could not load state list: ${error.message}`)); }, []);
   useEffect(() => { const onVoice = (event) => setF((current) => ({ ...current, q: event.detail || current.q })); addEventListener('healthconnect:voice-search', onVoice); return () => removeEventListener('healthconnect:voice-search', onVoice); }, []);
-  const qs = new URLSearchParams({ ...(f.q.trim() && { q: f.q.trim() }), ...(f.city && { city: f.city }), ...(f.country && { country: f.country }), ...(f.source && { source: f.source }), ...(f.type && { type: f.type }), ...(f.emergency && { emergency: true }), ...(f.beds && { beds: true }), ...(f.icu && { icu: true }), ...(f.verified && { verified: true }), page: f.page, limit: 50, ...(pos || {}) }).toString();
-  const mapQuery = pos ? `${pos.lat},${pos.lng}` : (f.city || 'hospitals');
+  const qs = new URLSearchParams({ ...(f.q.trim() && { q: f.q.trim() }), ...(f.state && { state: f.state }), ...(f.country && { country: f.country }), ...(f.source && { source: f.source }), ...(f.type && { type: f.type }), ...(f.emergency && { emergency: true }), ...(f.beds && { beds: true }), ...(f.icu && { icu: true }), ...(f.verified && { verified: true }), page: f.page, limit: 50, ...(pos || {}) }).toString();
+  const mapQuery = pos ? `${pos.lat},${pos.lng}` : (f.state || 'hospitals');
   const mapUrl = `https://maps.google.com/maps?q=${encodeURIComponent(pos ? `hospitals near ${mapQuery}` : `${f.q || 'hospitals'} near ${mapQuery}`)}&z=13&output=embed`;
   return <><h2>{t('hospital')}</h2><div className="card"><div className="row">
     <div><label htmlFor="hospital-search">{t('searchHospital')}</label><input id="hospital-search" placeholder={lang === 'hi' ? 'नाम, शहर या सेवा लिखें' : 'Name, city, or service'} value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} /></div>
-    <div><label htmlFor="c">{t('city')}</label><select id="c" value={f.city} onChange={(e) => setF({ ...f, city: e.target.value })}><option value="">{lang === 'hi' ? 'सभी शहर' : 'All cities'}</option>{cities.map((city) => <option key={city}>{city}</option>)}</select></div>
+    <div><label htmlFor="hospital-state">{lang === 'hi' ? 'राज्य — राजधानी' : 'State — capital'}</label><select id="hospital-state" value={f.state} onChange={(e) => setF({ ...f, state: e.target.value })}><option value="">{lang === 'hi' ? 'सभी राज्य' : 'All states'}</option>{states.map((stateName) => <option key={stateName} value={stateName}>{stateCapitals[stateName] ? `${stateName} — ${stateCapitals[stateName]}` : stateName}</option>)}</select></div>
     <div><label htmlFor="ty">{t('type')}</label><select id="ty" value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}><option value="">{t('any')}</option><option value="GOVERNMENT">{t('governmentHospitals')}</option><option value="PRIVATE">{t('privateHospitals')}</option></select></div></div>
     {[['emergency', 'Emergency'], ['beds', 'Beds available'], ['icu', 'ICU available']].map(([k, l]) => <label key={k}><input type="checkbox" style={{ width: 'auto' }} checked={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.checked })} /> {l}</label>)}
     <button className="b" onClick={async () => { const p = await locate(); setPos(p); setLocMsg(p ? 'Showing hospitals near your current location.' : 'Could not access location. Allow location permission or search by city.'); }}>{t('locate')}</button>{pos && <button className="b" onClick={() => setPos(null)}>Clear location</button>}<p role="status">{locMsg}</p></div>
@@ -248,35 +248,28 @@ function Emergency() {
 }
 
 function Blood() {
-  const { t } = useApp();
-  const [group, setGroup] = useState(''), [country, setCountry] = useState(''), [stateName, setStateName] = useState(''), [district, setDistrict] = useState(''), [region, setRegion] = useState('');
-  const [countries, setCountries] = useState([]), [states, setStates] = useState([]), [districts, setDistricts] = useState([]), [regions, setRegions] = useState([]);
+  const { t, lang } = useApp();
+  const [group, setGroup] = useState(''), [country, setCountry] = useState(''), [stateName, setStateName] = useState(''), [region, setRegion] = useState('');
+  const [countries, setCountries] = useState([]), [states, setStates] = useState([]), [stateCapitals, setStateCapitals] = useState({}), [regions, setRegions] = useState([]);
   const [term, setTerm] = useState(''), [pos, setPos] = useState(null), [s, setS] = useState(null), [message, setMessage] = useState(''), [loading, setLoading] = useState(false);
   useEffect(() => { api('/locations?path=Asia').then((d) => setCountries(d.items || [])).catch(() => setCountries(['India'])); }, []);
   useEffect(() => {
-    setStates([]); setStateName(''); setDistricts([]); setDistrict(''); setRegions([]); setRegion('');
+    setStates([]); setStateName(''); setRegions([]); setRegion('');
     let active = true;
-    if (country) api('/locations?path=' + encodeURIComponent(`Asia>${country}`)).then((d) => { if (active) setStates(d.items || []); }).catch(() => { if (active) setStates([]); });
+    if (country) api('/locations?path=' + encodeURIComponent(`Asia>${country}`)).then((d) => { if (active) { setStates(d.items || []); setStateCapitals(d.capitals || {}); } }).catch(() => { if (active) { setStates([]); setStateCapitals({}); } });
     return () => { active = false; };
   }, [country]);
   useEffect(() => {
-    setDistricts([]); setDistrict(''); setRegions([]); setRegion('');
-    let active = true;
-    if (country && stateName) api('/locations?path=' + encodeURIComponent(`Asia>${country}>${stateName}`)).then((d) => { if (active) setDistricts(d.items || []); }).catch(() => { if (active) setDistricts([]); });
-    return () => { active = false; };
-  }, [country, stateName]);
-  useEffect(() => {
     setRegions([]); setRegion('');
     let active = true;
-    if (country && stateName && district) api('/locations?path=' + encodeURIComponent(`Asia>${country}>${stateName}>${district}`)).then((d) => { if (active) setRegions(d.items || []); }).catch(() => { if (active) setRegions([]); });
+    if (country && stateName) api('/blood/locations?state=' + encodeURIComponent(stateName)).then((d) => { if (active) setRegions(d.regions || []); }).catch(() => { if (active) setRegions([]); });
     return () => { active = false; };
-  }, [country, stateName, district]);
+  }, [country, stateName]);
   useEffect(() => {
     const query = new URLSearchParams();
     if (group) query.set('group', group);
     if (country) query.set('country', country);
     if (stateName) query.set('state', stateName);
-    if (district) query.set('district', district);
     if (region) query.set('region', region);
     if (term.trim()) query.set('q', term.trim());
     if (pos) { query.set('lat', pos.lat); query.set('lng', pos.lng); query.set('radius', '50000'); }
@@ -285,7 +278,7 @@ function Blood() {
     setMessage('');
     cachedGet('/blood?' + query.toString()).then((result) => { if (active) setS(result); }).catch((e) => { if (active) { setS({ data: [] }); setMessage(e.message); } }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [group, country, stateName, district, region, term, pos?.lat, pos?.lng]);
+  }, [group, country, stateName, region, term, pos?.lat, pos?.lng]);
   const useLocation = () => {
     if (!navigator.geolocation) { setMessage('Location is not available in this browser. Search by city instead.'); return; }
     setMessage('');
@@ -295,7 +288,7 @@ function Blood() {
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
     );
   };
-  const reset = () => { setGroup(''); setCountry(''); setStateName(''); setDistrict(''); setRegion(''); setTerm(''); setPos(null); setMessage(''); };
+  const reset = () => { setGroup(''); setCountry(''); setStateName(''); setRegion(''); setTerm(''); setPos(null); setMessage(''); };
   return <><h2>{t('blood')}</h2><p className="card">{t('bloodNote')}</p>
     <section className="card" aria-label="Blood bank filters">
       <div className="row">
@@ -305,24 +298,54 @@ function Blood() {
       <h3>Location filters</h3><p className="stale">Choose each level to narrow results. The list updates as you change filters.</p>
       <div className="row">
         <div style={{ flex: '1 1 180px' }}><label htmlFor="blood-country">Country</label><select id="blood-country" value={country} onChange={(e) => setCountry(e.target.value)}><option value="">All countries</option>{countries.map((v) => <option key={v}>{v}</option>)}</select></div>
-        <div style={{ flex: '1 1 180px' }}><label htmlFor="blood-state">State</label><select id="blood-state" value={stateName} disabled={!country} onChange={(e) => setStateName(e.target.value)}><option value="">All states</option>{states.map((v) => <option key={v}>{v}</option>)}</select></div>
-        <div style={{ flex: '1 1 180px' }}><label htmlFor="blood-district">District</label><select id="blood-district" value={district} disabled={!stateName} onChange={(e) => setDistrict(e.target.value)}><option value="">All districts</option>{districts.map((v) => <option key={v}>{v}</option>)}</select></div>
-        <div style={{ flex: '1 1 180px' }}><label htmlFor="blood-region">Region / area</label><select id="blood-region" value={region} disabled={!district} onChange={(e) => setRegion(e.target.value)}><option value="">All regions</option>{regions.map((v) => <option key={v}>{v}</option>)}</select></div>
+        <div style={{ flex: '1 1 180px' }}><label htmlFor="blood-state">State — capital</label><select id="blood-state" value={stateName} disabled={!country} onChange={(e) => setStateName(e.target.value)}><option value="">All states</option>{states.map((v) => <option key={v} value={v}>{stateCapitals[v] ? `${v} — ${stateCapitals[v]}` : v}</option>)}</select></div>
+        <div style={{ flex: '1 1 180px' }}><label htmlFor="blood-region">Region / area</label><select id="blood-region" value={region} disabled={!stateName} onChange={(e) => setRegion(e.target.value)}><option value="">All regions</option>{regions.map((v) => <option key={v}>{v}</option>)}</select></div>
       </div>
       <div className="row" style={{ marginTop: '.6rem' }}><button type="button" className="b" onClick={useLocation}>◎ Use my location</button>{pos && <button type="button" className="b" onClick={() => setPos(null)}>Remove location</button>}<button type="button" className="b" onClick={reset}>Clear filters</button></div>
       {message && <p role="status" className="stale">{message}</p>}{pos && <p className="stale">Showing banks within 50 km. Location is used only for this search.</p>}
     </section>
     {loading && <p role="status" className="stale">Updating blood bank results…</p>}
     {s?.fromCache && <p className="card stale">Showing saved results; availability may be out of date. Call to confirm.</p>}
-    {s?.data.map((b) => <article className="card" key={b._id}><h3>{b.name}</h3><p>{[b.area, b.city].filter(Boolean).join(', ')}</p>{b.inventory.map((i) => <span key={i.group} className={`tag ${i.units > 5 ? 'AVAILABLE' : i.units ? 'LIMITED' : 'FULL'}`}>{i.group}: {i.units > 5 ? 'Available' : i.units ? 'Limited' : 'None'}</span>)}<br />{b.inventory[0] && <Freshness at={b.inventory[0].updatedAt} fromCache={s.fromCache} />}{b.phone && <p><a href={`tel:${b.phone}`}>{t('call')} {b.phone}</a></p>}</article>)}
+    {s?.data.map((b) => {
+      const recorded = group && b.inventory.find((item) => item.group === group);
+      const availability = group ? b.selectedAvailability || {
+        group, units: recorded?.units ?? 0,
+        status: !recorded || recorded.units == null ? 'NOT_REPORTED' : recorded.units > 0 ? 'AVAILABLE' : 'NOT_AVAILABLE',
+        updatedAt: recorded?.updatedAt ?? null,
+      } : null;
+      return <article className="card" key={b._id}><h3>{b.name}</h3><p>{[b.area, b.city, b.state].filter(Boolean).join(', ')}</p>{availability ? <p><b>{group}:</b> <span className={`tag ${availability.status === 'AVAILABLE' ? 'AVAILABLE' : 'FULL'}`}>{availability.status === 'AVAILABLE' ? (lang === 'hi' ? `उपलब्ध · ${availability.units} यूनिट` : `Available · ${availability.units} units`) : availability.status === 'NOT_AVAILABLE' ? (lang === 'hi' ? 'अभी उपलब्ध नहीं' : 'Not available') : (lang === 'hi' ? 'स्टॉक की जानकारी दर्ज नहीं है' : 'Availability not reported')}</span></p> : b.inventory.map((i) => <span key={i.group} className={`tag ${i.units > 5 ? 'AVAILABLE' : i.units ? 'LIMITED' : 'FULL'}`}>{i.group}: {i.units > 5 ? 'Available' : i.units ? 'Limited' : 'Not available'}</span>)}<br />{availability ? availability.updatedAt && <Freshness at={availability.updatedAt} fromCache={s.fromCache} /> : b.inventory[0] && <Freshness at={b.inventory[0].updatedAt} fromCache={s.fromCache} />}{b.phone && <p><a href={`tel:${b.phone}`}>{t('call')} {b.phone}</a></p>}</article>;
+    })}
     {s && !loading && !s.data.length && <p className="card">No blood banks match these filters. Try a broader location, another blood group, or a different search.</p>}
   </>;
 }
 
 function Ambulance() {
-  const { t } = useApp(), [s, setS] = useState(null);
-  useEffect(() => { locate().then((p) => cachedGet('/ambulances' + (p ? `?lat=${p.lat}&lng=${p.lng}` : '')).then(setS).catch(() => setS({ data: [] }))); }, []);
-  return <><h2>{t('ambulance')}</h2>{s?.data.map((a) => <article className="card" key={a._id}><h3>{a.vehicleId} · {a.type}</h3><p>{a.agency}</p><Freshness at={a.updatedAt} fromCache={s.fromCache} /><p><a className="big" href={`tel:${a.phone}`}>{t('call')} {a.phone}</a></p></article>)}</>;
+  const { t, user } = useApp(), [s, setS] = useState(null), [error, setError] = useState('');
+  const canManageFleet = ['GOVERNMENT_ADMIN', 'HOSPITAL_ADMIN', 'SUPER_ADMIN'].includes(user?.role);
+  useEffect(() => { cachedGet('/ambulances/directory').then(setS).catch((e) => setError(e.message)); }, []);
+  const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return <><h2>{t('ambulance')}</h2><p>{s?.data.length || 0} registered ambulances. Call the listed ambulance number to confirm availability.</p>
+    {error && <p className="err" role="alert">{error}</p>}
+    {!s && !error && <p role="status">Loading ambulance directory…</p>}
+    {s?.fromCache && <p className="card stale">Showing saved ambulance details. Driver shifts and vehicle availability may have changed; call to confirm.</p>}
+    {s?.data.map((a) => <article className="card" key={a._id}>
+      <h3>{a.vehicleId} · {a.type}</h3><p>{a.agency}{a.plateNumber ? ` · Plate: ${a.plateNumber}` : ''}</p>
+      <p><b>Status:</b> {a.status}</p>
+      <p><b>Assigned driver:</b> {a.driver?.name || 'Driver not yet paired'}</p>
+      {a.driver?.phone
+        ? <p><a className="big" href={`tel:${a.driver.phone}`}>Call driver {a.driver.phone}</a></p>
+        : a.driver
+          ? <p className="stale">Driver phone is not shared yet. The driver must enable public emergency calls from the Driver GPS page.</p>
+          : <p className="stale">No driver is paired with this ambulance yet, so a driver phone number cannot be displayed. A hospital or government fleet admin must create a driver invitation; the driver then signs up with their phone number and pairs with this ambulance.</p>}
+      {a.shift?.days?.length && a.shift.startTime && a.shift.endTime
+        ? <p><b>Driver shift:</b> {a.shift.days.map((day) => weekdays[day]).join(', ')} · {a.shift.startTime}–{a.shift.endTime} ({a.shift.timezone || 'Asia/Kolkata'})</p>
+        : <p><b>Driver shift:</b> Not scheduled yet</p>}
+      <Freshness at={a.updatedAt} fromCache={s.fromCache} />
+      {a.phone && <p><a className="big" href={`tel:${a.phone}`}>{t('call')} {a.phone}</a></p>}
+      {canManageFleet && (!a.driver || !a.driver.phone) && <Link className="b" to="/admin/fleet">Pair driver / manage contacts</Link>}
+    </article>)}
+    {s && !s.data.length && <p className="card">No ambulances are registered yet.</p>}
+  </>;
 }
 
 function Guided() {
@@ -332,14 +355,53 @@ function Guided() {
     {need && <><h3>{need}</h3><HospitalList showAsk query={opts[need] + (pos ? `&lat=${pos.lat}&lng=${pos.lng}` : '')} /></>}</>;
 }
 
+const DEPARTMENT_GROUPS = [
+  { title: 'Broad Specialty Departments', departments: ['Anatomy', 'Physiology', 'Biochemistry', 'Pharmacology', 'Pathology', 'Microbiology', 'Forensic Medicine & Toxicology', 'Community Medicine', 'General Medicine', 'Paediatric', 'Tuberculosis and Respiratory Disease', 'Psychiatry', 'Dermatology, Venereology & Leprosy', 'General Surgery', 'Orthopaedics', 'Oto-rhino-laryngology (ENT)', 'Ophthalmology', 'Obstetrics & Gynaecology', 'Anaesthesiology', 'Radiodiagnosis & Imaging', 'Dentistry', 'Cardiology', 'Cardiovascular and Thoracic Surgery (CVTS)', 'Critical Care Unit (CCU)', 'Nephrology with Dialysis', 'Paediatrics Surgery', 'Plastic Surgery', 'Gastroenterology', 'Bariatric & Metabolic Surgery'] },
+  { title: 'Super Specialty Clinic', departments: ['Neurology & Neurosurgery', 'Urology'] },
+  { title: 'Medical Education Unit (MEU)', departments: ['Medical Education Unit (MEU)'] },
+];
+const KNOWN_DEPARTMENTS = new Set(DEPARTMENT_GROUPS.flatMap((group) => group.departments));
+
 function Doctors() {
   const { lang } = useApp();
-  const [sp, setSp] = useState(new URLSearchParams(location.search).get('specialization') || ''), [departments, setDepartments] = useState([]), [s, setS] = useState(null), [error, setError] = useState('');
-  useEffect(() => { api('/doctors/departments').then(setDepartments).catch(() => setDepartments([])); }, []);
-  useEffect(() => { if (!sp) { setS({ data: [] }); return; } setS(null); cachedGet('/doctors?specialization=' + encodeURIComponent(sp) + '&limit=50').then(setS).catch((e) => { setS({ data: [] }); setError(e.message); }); }, [sp]);
+  const [sp, setSp] = useState(new URLSearchParams(location.search).get('specialization') || ''), [departments, setDepartments] = useState([]), [s, setS] = useState(null), [error, setError] = useState(''), [departmentError, setDepartmentError] = useState('');
+  useEffect(() => { api('/doctors/departments').then(setDepartments).catch((e) => setDepartmentError(e.message)); }, []);
+  useEffect(() => {
+    if (!sp) { setS(null); setError(''); return; }
+    let active = true;
+    setS(null); setError('');
+    cachedGet('/doctors?specialization=' + encodeURIComponent(sp) + '&limit=50').then((result) => { if (active) setS(result); }).catch((e) => { if (active) { setS({ data: [] }); setError(e.message); } });
+    return () => { active = false; };
+  }, [sp]);
   const book = async (id) => { const when = prompt(lang === 'hi' ? 'पसंदीदा तारीख और समय (YYYY-MM-DD HH:MM)' : 'Preferred date & time (YYYY-MM-DD HH:MM)'); if (when) { const r = await queuedPost('/appointments', { doctor: id, when: new Date(when).toISOString() }).catch((e) => alert(e.message)); r && alert(r.queued ? (lang === 'hi' ? 'ऑफ़लाइन सेव हुआ; इंटरनेट आने पर भेजा जाएगा।' : 'Saved offline; will send when online.') : (lang === 'hi' ? 'अनुरोध भेजा गया।' : 'Appointment requested.')); } };
-  return <><h2>{lang === 'hi' ? 'डॉक्टर खोजें' : 'Find a doctor'}</h2><section className="card"><label htmlFor="doctor-department">{lang === 'hi' ? 'विभाग / विशेषज्ञता चुनें' : 'Choose a department / specialty'}</label><select id="doctor-department" value={sp} onChange={(event) => setSp(event.target.value)}><option value="">{lang === 'hi' ? 'विभाग चुनें' : 'Select a department'}</option>{departments.map((department) => <option key={department} value={department}>{department}</option>)}</select>{!departments.length && <p className="stale">{lang === 'hi' ? 'विभाग डॉक्टरों की पंजीकृत विशेषज्ञता से दिखेंगे। अभी कोई विभाग सूचीबद्ध नहीं है।' : 'Departments come from registered doctor specialties. None are listed yet.'}</p>}</section>
-    {error && <p className="err" role="alert">{error}</p>}{sp && !s && <p>{lang === 'hi' ? 'डॉक्टर खोज रहे हैं…' : 'Loading doctors…'}</p>}{sp && s?.data.length === 0 && <p>{lang === 'hi' ? 'इस विभाग में अभी कोई डॉक्टर सूचीबद्ध नहीं है।' : 'No doctors are listed in this department yet.'}</p>}{sp && s?.data.map((doctor) => <article className="card" key={doctor._id}><h3>{doctor.user?.name || (lang === 'hi' ? 'डॉक्टर' : 'Doctor')}</h3><span className="tag">{doctor.verified ? (lang === 'hi' ? 'सत्यापित डॉक्टर' : 'Verified doctor') : (lang === 'hi' ? 'सत्यापन लंबित' : 'Verification pending')}</span><p>{doctor.specialization} · {doctor.qualification || ''} · {doctor.experience ?? '—'} {lang === 'hi' ? 'वर्ष अनुभव' : 'years experience'}<br />{doctor.hospital?.name || (lang === 'hi' ? 'अस्पताल उपलब्ध नहीं' : 'Hospital not listed')} · {doctor.hospital?.city || ''}</p><p>{doctor.ratingCount ? `★ ${doctor.rating.toFixed(1)} (${doctor.ratingCount} ${lang === 'hi' ? 'मरीज रेटिंग' : 'patient ratings'})` : (lang === 'hi' ? 'अभी मरीज रेटिंग नहीं' : 'No patient ratings yet')}</p><button className="b" onClick={() => book(doctor._id)}>{lang === 'hi' ? 'अपॉइंटमेंट बुक करें' : 'Book appointment'}</button></article>)}
+  const extraDepartments = departments.filter((department) => !KNOWN_DEPARTMENTS.has(department));
+  const renderDepartment = (department) => <button type="button" key={department} className="department-option" aria-pressed={sp === department} onClick={() => setSp(department)}>{department}<span aria-hidden="true">›</span></button>;
+  return <><h2>{lang === 'hi' ? 'विभाग और डॉक्टर' : 'Departments & doctors'}</h2>
+    <p>{lang === 'hi' ? 'विभाग चुनें और उस विभाग के पंजीकृत डॉक्टरों की पूरी प्रोफ़ाइल देखें।' : 'Choose a department to see the registered doctors and their full available profiles.'}</p>
+    <section className="department-groups" aria-label={lang === 'hi' ? 'चिकित्सा विभाग' : 'Medical departments'}>
+      {DEPARTMENT_GROUPS.map((group) => <div className="card department-group" key={group.title}><h3>{group.title}</h3><div className="department-list">{group.departments.map(renderDepartment)}</div></div>)}
+      {!!extraDepartments.length && <div className="card department-group"><h3>{lang === 'hi' ? 'अन्य पंजीकृत विभाग' : 'Other registered departments'}</h3><div className="department-list">{extraDepartments.map(renderDepartment)}</div></div>}
+    </section>
+    {departmentError && <p className="stale" role="status">{lang === 'hi' ? 'अभी पंजीकृत डॉक्टर विभाग लोड नहीं हो सके। मानक विभाग सूची उपलब्ध है।' : `Registered doctor departments could not be loaded: ${departmentError}. The standard department list is still available.`}</p>}
+    {sp && <section aria-live="polite"><div className="department-results-heading"><h3>{sp}</h3><button type="button" className="b" onClick={() => setSp('')}>{lang === 'hi' ? 'सभी विभाग' : 'All departments'}</button></div>
+      {error && <p className="err" role="alert">{error}</p>}{!s && <p role="status">{lang === 'hi' ? 'डॉक्टर खोज रहे हैं…' : 'Loading doctors…'}</p>}
+      {s?.data.length === 0 && <p className="card">{lang === 'hi' ? 'इस विभाग में अभी कोई डॉक्टर सूचीबद्ध नहीं है।' : 'No doctors are listed in this department yet.'}</p>}
+      {s?.data.map((doctor) => <article className="card doctor-profile" key={doctor._id}>
+        <div className="doctor-profile-heading"><div><h3>{doctor.user?.name || (lang === 'hi' ? 'डॉक्टर' : 'Doctor')}</h3><p>{doctor.specialization}</p></div><span className={`tag ${doctor.verified ? 'AVAILABLE' : 'LIMITED'}`}>{doctor.verified ? (lang === 'hi' ? 'सत्यापित डॉक्टर' : 'Verified doctor') : (lang === 'hi' ? 'सत्यापन लंबित' : 'Verification pending')}</span></div>
+        <dl className="doctor-details">
+          <div><dt>{lang === 'hi' ? 'योग्यता' : 'Qualification'}</dt><dd>{doctor.qualification || '—'}</dd></div>
+          <div><dt>{lang === 'hi' ? 'अनुभव' : 'Experience'}</dt><dd>{doctor.experience ?? '—'} {lang === 'hi' ? 'वर्ष' : 'years'}</dd></div>
+          <div><dt>{lang === 'hi' ? 'मेडिकल पंजीकरण' : 'Medical registration'}</dt><dd>{doctor.licenseNo || '—'}</dd></div>
+          <div><dt>{lang === 'hi' ? 'परामर्श शुल्क' : 'Consultation fee'}</dt><dd>{doctor.fee == null ? '—' : `₹${doctor.fee}`}</dd></div>
+          <div><dt>{lang === 'hi' ? 'अस्पताल' : 'Hospital'}</dt><dd>{[doctor.hospital?.name, doctor.hospital?.city].filter(Boolean).join(', ') || (lang === 'hi' ? 'उपलब्ध नहीं' : 'Not listed')}</dd></div>
+          <div><dt>{lang === 'hi' ? 'भाषाएँ' : 'Languages'}</dt><dd>{doctor.languages?.length ? doctor.languages.join(', ') : '—'}</dd></div>
+          <div><dt>{lang === 'hi' ? 'परामर्श के तरीके' : 'Consultation modes'}</dt><dd>{doctor.modes?.length ? doctor.modes.join(', ') : '—'}</dd></div>
+          <div><dt>{lang === 'hi' ? 'रेटिंग' : 'Patient rating'}</dt><dd>{doctor.ratingCount ? `★ ${Number(doctor.rating || 0).toFixed(1)} (${doctor.ratingCount})` : (lang === 'hi' ? 'अभी कोई रेटिंग नहीं' : 'No ratings yet')}</dd></div>
+        </dl>
+        {doctor.slots?.length > 0 && <div><b>{lang === 'hi' ? 'उपलब्ध समय' : 'Available hours'}</b><ul>{doctor.slots.map((slot, index) => <li key={`${slot.day}-${slot.from}-${index}`}>{['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][slot.day] || 'Day'}: {slot.from}–{slot.to}</li>)}</ul></div>}
+        <button className="b" onClick={() => book(doctor._id)}>{lang === 'hi' ? 'अपॉइंटमेंट बुक करें' : 'Book appointment'}</button>
+      </article>)}
+    </section>}
   </>;
 }function Auth({ mode }) {
   const { setUser, t } = useApp(), nav = useNavigate(), [f, setF] = useState({ role: mode === 'register' ? 'PATIENT' : '' }), [err, setErr] = useState(''), [hospitals, setHospitals] = useState([]), googleButton = useRef(null), currentForm = useRef(f);
@@ -367,7 +429,7 @@ function Doctors() {
   const go = async (e) => { e.preventDefault(); try {
     const registering = mode === 'register';
     const body = !registering ? { identifier: f.identifier, password: f.password, ...(f.role && { role: f.role }) } : {
-      name: f.name, [/@/.test(f.identifier) ? 'email' : 'phone']: f.identifier, password: f.password, role: f.role, identityConsent: f.identityConsent === true,
+      name: f.name, [/@/.test(f.identifier) ? 'email' : 'phone']: f.identifier, password: f.password, role: f.role, identityConsent: f.identityConsent === true, driverPhonePublicConsent: f.driverPhonePublicConsent === true,
       ...(f.role === 'PATIENT' && { patientProfile: { age: Number(f.age), gender: f.gender, ...(f.bloodGroup && { bloodGroup: f.bloodGroup }) } }),
       ...(f.role === 'AMBULANCE_DRIVER' && { driverProfile: { vehicleId: f.vehicleId, inviteToken: f.driverInviteToken } }),
       ...(f.inviteToken && { inviteToken: f.inviteToken }),
@@ -378,12 +440,12 @@ function Doctors() {
   } catch (x) { setErr(x.message); } };
   return <form className="card" onSubmit={go}><h2>{mode === 'login' ? t('login') : t('register')}</h2>{mode === 'login' && <><label htmlFor="login-role">Sign in as (optional)</label><select id="login-role" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}><option value="">Choose automatically from account</option><option value="PATIENT">Patient / User</option><option value="DOCTOR">Doctor</option><option value="HOSPITAL_ADMIN">Hospital Admin</option><option value="AMBULANCE_DRIVER">Ambulance Driver</option><option value="GOVERNMENT_ADMIN">Government Admin</option><option value="SUPER_ADMIN">Super Admin</option></select></>}{mode === 'register' && <><label htmlFor="n">Full legal name</label><input id="n" autoComplete="name" required onChange={(e) => setF({ ...f, name: e.target.value })} /><label htmlFor="r">Account role</label><select id="r" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}><option value="PATIENT">Patient / User</option><option value="DOCTOR">Doctor</option><option value="HOSPITAL_ADMIN">Hospital Admin</option><option value="AMBULANCE_DRIVER">Ambulance Driver (invitation required)</option><option value="GOVERNMENT_ADMIN">Government / Admin (invitation required)</option><option value="SUPER_ADMIN">Super Admin (invitation required)</option></select>
     {f.role === 'PATIENT' && <fieldset><legend>Patient details</legend><label htmlFor="patientAge">Age</label><input id="patientAge" type="number" min="0" max="120" required onChange={(e) => setF({ ...f, age: e.target.value })} /><label htmlFor="patientGender">Gender</label><select id="patientGender" required onChange={(e) => setF({ ...f, gender: e.target.value })}><option value="">Choose</option><option value="FEMALE">Female</option><option value="MALE">Male</option><option value="OTHER">Other</option><option value="PREFER_NOT_TO_SAY">Prefer not to say</option></select><label htmlFor="bloodGroup">Blood group (optional)</label><select id="bloodGroup" onChange={(e) => setF({ ...f, bloodGroup: e.target.value })}><option value="">Not provided</option>{['A+','A-','B+','B-','AB+','AB-','O+','O-'].map((g) => <option key={g}>{g}</option>)}</select></fieldset>}
-    {f.role === 'AMBULANCE_DRIVER' && <fieldset><legend>Vehicle pairing</legend><label htmlFor="driverVehicle">Fleet ID provided by your dispatcher</label><input id="driverVehicle" required onChange={(e) => setF({ ...f, vehicleId: e.target.value })} /><label htmlFor="driverToken">One-time driver invitation code</label><input id="driverToken" required autoComplete="one-time-code" onChange={(e) => setF({ ...f, driverInviteToken: e.target.value })} /><p className="stale">Ask your hospital/dispatch admin for a vehicle pairing code before creating this account.</p></fieldset>}
+    {f.role === 'AMBULANCE_DRIVER' && <fieldset><legend>Vehicle pairing</legend><label htmlFor="driverVehicle">Fleet ID provided by your dispatcher</label><input id="driverVehicle" required onChange={(e) => setF({ ...f, vehicleId: e.target.value })} /><label htmlFor="driverToken">One-time driver invitation code</label><input id="driverToken" required autoComplete="one-time-code" onChange={(e) => setF({ ...f, driverInviteToken: e.target.value })} /><p className="stale">Ask your hospital/dispatch admin for a vehicle pairing code before creating this account.</p><label><input type="checkbox" required checked={f.driverPhonePublicConsent === true} onChange={(e) => setF({ ...f, driverPhonePublicConsent: e.target.checked })} /> I agree that my registered phone number will be shown in the public ambulance directory for emergency calls.</label></fieldset>}
     {f.role === 'DOCTOR' && <fieldset><legend>Professional details</legend>{[['qualification', 'Medical qualification'], ['specialization', 'Specialization'], ['licenseNo', 'Medical registration / licence number']].map(([k, label]) => <div key={k}><label htmlFor={k}>{label}</label><input id={k} required onChange={(e) => setF({ ...f, [k]: e.target.value })} /></div>)}<label htmlFor="doctorHospital">Registered hospital</label><select id="doctorHospital" required value={f.hospital || ''} onChange={(e) => setF({ ...f, hospital: e.target.value })}><option value="">Choose an approved hospital</option>{hospitals.map((h) => <option key={h._id} value={h._id}>{h.name} · {h.city}</option>)}</select>{!hospitals.length && <p className="stale">No approved hospital is available yet. Hospital registration must be approved before doctor signup.</p>}<label htmlFor="experience">Years of experience</label><input id="experience" type="number" min="0" max="80" required onChange={(e) => setF({ ...f, experience: e.target.value })} /><label htmlFor="fee">Consultation fee (optional)</label><input id="fee" type="number" min="0" onChange={(e) => setF({ ...f, fee: e.target.value })} /></fieldset>}
     {f.role === 'HOSPITAL_ADMIN' && <fieldset><legend>Hospital details</legend><label htmlFor="hospitalName">Hospital name</label><input id="hospitalName" required onChange={(e) => setF({ ...f, hospitalName: e.target.value })} /><label htmlFor="licenseNumber">Hospital license / registration number</label><input id="licenseNumber" required onChange={(e) => setF({ ...f, licenseNumber: e.target.value })} /><label htmlFor="hospitalType">Ownership</label><select id="hospitalType" value={f.hospitalType || 'PRIVATE'} onChange={(e) => setF({ ...f, hospitalType: e.target.value })}><option value="PRIVATE">Private</option><option value="GOVERNMENT">Government</option></select>{[['city', 'City'], ['area', 'Area / locality'], ['hospitalPhone', 'Hospital phone']].map(([k, label]) => <div key={k}><label htmlFor={k}>{label}</label><input id={k} required={k === 'city'} onChange={(e) => setF({ ...f, [k]: e.target.value })} /></div>)}<label htmlFor="lat">Hospital latitude</label><input id="lat" type="number" step="any" min="-90" max="90" required onChange={(e) => setF({ ...f, lat: e.target.value })} /><label htmlFor="lng">Hospital longitude</label><input id="lng" type="number" step="any" min="-180" max="180" required onChange={(e) => setF({ ...f, lng: e.target.value })} /></fieldset>}
     {['DOCTOR', 'HOSPITAL_ADMIN', 'GOVERNMENT_ADMIN', 'SUPER_ADMIN'].includes(f.role) && <><p className="stale">Aadhaar, PAN and DigiLocker review status will be created with signup. This demo has no official provider connection; it will not ask you to enter identity numbers or transmit them. Identity checks do not replace your password for login.</p><label><input type="checkbox" required checked={f.identityConsent === true} onChange={(e) => setF({ ...f, identityConsent: e.target.checked })} /> I consent to creating an identity review request for this account. I understand a real provider would require a separate consent and verification step.</label></>}
     {['GOVERNMENT_ADMIN', 'SUPER_ADMIN'].includes(f.role) && <><label htmlFor="invite">Administrator invitation code</label><input id="invite" required autoComplete="one-time-code" onChange={(e) => setF({ ...f, inviteToken: e.target.value })} /></>}</>}
-    <label htmlFor="i">Email or phone</label><input id="i" required autoComplete="username" onChange={(e) => setF({ ...f, identifier: e.target.value })} /><label htmlFor="p">Password (8+ characters)</label><input id="p" type="password" minLength={8} required autoComplete="current-password" onChange={(e) => setF({ ...f, password: e.target.value })} />
+    <label htmlFor="i">{mode === 'register' && f.role === 'AMBULANCE_DRIVER' ? 'Driver contact phone (shown in ambulance directory for emergencies)' : mode === 'register' ? 'Email or phone' : 'Email or phone'}</label><input id="i" type={mode === 'register' && f.role === 'AMBULANCE_DRIVER' ? 'tel' : 'text'} inputMode={mode === 'register' && f.role === 'AMBULANCE_DRIVER' ? 'tel' : undefined} pattern={mode === 'register' && f.role === 'AMBULANCE_DRIVER' ? '\\+?\\d{10,13}' : undefined} placeholder={mode === 'register' && f.role === 'AMBULANCE_DRIVER' ? '+911234567890' : undefined} required autoComplete="username" onChange={(e) => setF({ ...f, identifier: e.target.value })} /><label htmlFor="p">Password (8+ characters)</label><input id="p" type="password" minLength={8} required autoComplete="current-password" onChange={(e) => setF({ ...f, password: e.target.value })} />
     {err && <p className="err" role="alert">{err}</p>}<button className="b">{t('submit')}</button>{(mode === 'login' || f.role === 'PATIENT') && import.meta.env.VITE_GOOGLE_CLIENT_ID && <div className="card"><p>Or continue with Google</p><div ref={googleButton} /></div>}{mode === 'login' && <p><Link to="/register">{t('register')}</Link> · <Link to="/otp">Phone code</Link> · <Link to="/forgot">Forgot password?</Link></p>}</form>;
 }
 
@@ -439,16 +501,32 @@ function Admin() {
 
 function Place() {
   const { lang } = useApp();
-  const labels = ['Continent', 'Country', 'State', 'City', 'Area'];
+  const labels = ['Continent', 'Country', 'State — Capital', 'City', 'Area'];
   const fields = ['continent', 'country', 'state', 'city', 'area'];
   const [selected, setSelected] = useState({}), [options, setOptions] = useState([[], [], [], [], []]);
+  const [states, setStates] = useState([]), [stateCapitals, setStateCapitals] = useState({});
   useEffect(() => {
     let active = true;
     cachedGet('/locations?level=all').then((result) => {
-      if (active) setOptions(fields.map((field) => result.data.items[field] || []));
+      if (active) setOptions(fields.map((field) => field === 'state' ? [] : result.data.items[field] || []));
     }).catch(() => {});
     return () => { active = false; };
   }, [lang]);
+  useEffect(() => {
+    let active = true;
+    api('/locations?path=' + encodeURIComponent('Asia>India')).then((result) => {
+      if (active) {
+        setStates(result.items || []);
+        setStateCapitals(result.capitals || {});
+      }
+    }).catch(() => {
+      if (active) {
+        setStates([]);
+        setStateCapitals({});
+      }
+    });
+    return () => { active = false; };
+  }, []);
   const hasSelection = Object.values(selected).some(Boolean);
   const query = new URLSearchParams();
   if (selected.continent === 'Asia') query.set('country', 'India');
@@ -460,7 +538,7 @@ function Place() {
       <label htmlFor={`area-${level}`}>{label}</label>
       <select id={`area-${level}`} value={selected[fields[level]] || ''} onChange={(event) => setSelected((current) => ({ ...current, [fields[level]]: event.target.value }))}>
         <option value="">Select {label} (optional)</option>
-        {(options[level] || []).map((item) => <option key={item} value={item}>{item}</option>)}
+        {(level === 2 ? states : options[level] || []).map((item) => <option key={item} value={item}>{level === 2 && stateCapitals[item] ? `${item} — ${stateCapitals[item]}` : item}</option>)}
       </select>
     </div>)}
     {hasSelection && <button type="button" className="b" onClick={() => setSelected({})}>Clear selections</button>}
@@ -656,27 +734,33 @@ function LiveFleet() {
 
 function FleetPanel() {
   const { user, low } = useApp();
-  const [fleet, setFleet] = useState([]), [sites, setSites] = useState([]), [hospitals, setHospitals] = useState([]), [msg, setMsg] = useState(''), [form, setForm] = useState({}), [siteForm, setSiteForm] = useState({ radiusMeters: 150 }), [focus, setFocus] = useState(''), [pairing, setPairing] = useState(null);
+  const [fleet, setFleet] = useState([]), [sites, setSites] = useState([]), [hospitals, setHospitals] = useState([]), [msg, setMsg] = useState(''), [form, setForm] = useState({ shift: { days: [1, 2, 3, 4, 5, 6], startTime: '08:00', endTime: '20:00' } }), [siteForm, setSiteForm] = useState({ radiusMeters: 150 }), [focus, setFocus] = useState(''), [pairing, setPairing] = useState(null);
   const watchers = useRef({});
+  const weekDays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const load = async () => { try { const [a, s, h] = await Promise.all([api('/ambulances/fleet'), api('/sites'), user?.role === 'GOVERNMENT_ADMIN' || user?.role === 'SUPER_ADMIN' ? api('/hospitals?limit=50') : Promise.resolve([])]); setFleet(a); setSites(s); setHospitals(h.filter((x) => x.verified)); } catch (e) { setMsg(e.message); } };
   useEffect(() => { load(); const timer = setInterval(load, 5000); return () => clearInterval(timer); }, []);
   useEffect(() => () => Object.values(watchers.current).forEach((id) => navigator.geolocation?.clearWatch(id)), []);
-  const submit = async (e) => { e.preventDefault(); try { const a = await api('/ambulances/fleet', { method: 'POST', body: { ...form, equipment: (form.equipment || '').split(',').map((x) => x.trim()).filter(Boolean), ...(form.site && { site: form.site }), ...(form.hospital && { hospital: form.hospital }), ...(form.lat && form.lng && { lat: +form.lat, lng: +form.lng }) } }); setPairing({ vehicleId: a.vehicleId, token: a.driverInviteToken }); setForm({}); setMsg('Ambulance registered. Give the one-time invitation below to its driver.'); load(); } catch (x) { setMsg(x.message); } };
+  const submit = async (e) => { e.preventDefault(); try { const a = await api('/ambulances/fleet', { method: 'POST', body: { ...form, shift: { ...form.shift, timezone: 'Asia/Kolkata' }, equipment: (form.equipment || '').split(',').map((x) => x.trim()).filter(Boolean), ...(form.site && { site: form.site }), ...(form.hospital && { hospital: form.hospital }), ...(form.lat && form.lng && { lat: +form.lat, lng: +form.lng }) } }); setPairing({ vehicleId: a.vehicleId, token: a.driverInviteToken }); setForm({ shift: { days: [1, 2, 3, 4, 5, 6], startTime: '08:00', endTime: '20:00' } }); setMsg('Ambulance registered. Give the one-time invitation below to its driver.'); load(); } catch (x) { setMsg(x.message); } };
+  const saveShift = async (e, ambulance) => { e.preventDefault(); const values = new FormData(e.currentTarget), shift = { days: values.getAll('shiftDays').map(Number), startTime: values.get('startTime'), endTime: values.get('endTime'), timezone: 'Asia/Kolkata' }; try { await api(`/ambulances/${ambulance._id}`, { method: 'PATCH', body: { shift } }); setMsg(`Driver shift saved for ${ambulance.vehicleId}.`); load(); } catch (error) { setMsg(error.message); } };
   const addSite = async (e) => { e.preventDefault(); try { await api('/sites', { method: 'POST', body: { ...siteForm, lat: +siteForm.lat, lng: +siteForm.lng, radiusMeters: +siteForm.radiusMeters, ...(siteForm.hospital && { hospital: siteForm.hospital }) } }); setMsg('Site registered.'); load(); } catch (x) { setMsg(x.message); } };
   const track = (a) => { if (!navigator.geolocation) return setMsg('GPS is unavailable in this browser.'); if (watchers.current[a._id] !== undefined) { navigator.geolocation.clearWatch(watchers.current[a._id]); delete watchers.current[a._id]; setMsg(`GPS tracking stopped for ${a.vehicleId}.`); return; } watchers.current[a._id] = navigator.geolocation.watchPosition(async ({ coords }) => { try { await api(`/ambulances/${a._id}/location`, { method: 'PATCH', body: { lat: coords.latitude, lng: coords.longitude } }); setMsg(`Live GPS updated for ${a.vehicleId}.`); load(); } catch (e) { setMsg(e.message); navigator.geolocation.clearWatch(watchers.current[a._id]); delete watchers.current[a._id]; } }, (e) => setMsg(e.message), { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }); setMsg(`Live GPS tracking started for ${a.vehicleId}.`); };
   const F = (s, set, k, label, type = 'text') => <><label>{label}</label><input required type={type} step={type === 'number' ? 'any' : undefined} value={s[k] ?? ''} onChange={(e) => set({ ...s, [k]: e.target.value })} /></>;
   const focused = fleet.find((a) => a._id === focus) || fleet.find((a) => a.location?.coordinates?.some((n) => n !== 0));
   const [mapLng, mapLat] = focused?.location?.coordinates || [];
   const mapUrl = Number.isFinite(mapLat) && Number.isFinite(mapLng) && (mapLat !== 0 || mapLng !== 0) ? `https://www.openstreetmap.org/export/embed.html?bbox=${mapLng - .03}%2C${mapLat - .02}%2C${mapLng + .03}%2C${mapLat + .02}&layer=mapnik&marker=${mapLat}%2C${mapLng}` : '';
-  return <><h2>Ambulance fleet and live locations</h2><p>Refreshes automatically. Assigned drivers can sign in separately and stream GPS from their device.</p>{focused && <section className="card"><label htmlFor="fleet-focus">Focus ambulance</label><select id="fleet-focus" value={focused._id} onChange={(e) => setFocus(e.target.value)}>{fleet.map((a) => <option key={a._id} value={a._id}>{a.vehicleId} ({a.status.toLowerCase()})</option>)}</select>{mapUrl ? <iframe title={`Map location of ${focused.vehicleId}`} src={mapUrl} loading="lazy" style={{ width: '100%', height: '360px', border: 0, borderRadius: '12px', marginTop: '1rem' }} /> : <p>Waiting for the first GPS update for this ambulance.</p>}</section>}<div className="grid">{fleet.map((a) => <article className="card" key={a._id}><b>{a.vehicleId}</b> · {a.type} <span className="tag">{a.status}</span><p>Plate: {a.plateNumber} · {a.hospital?.name || a.agency}</p><p>{a.site?.name || 'Outside registered sites'} · Crew: {a.crew || 'Not assigned'}</p><p>Driver: {a.driver?.name || (a.driverInvitePending ? 'Invitation pending' : 'Not paired')}</p>{!a.driver && <button className="b" onClick={async () => { try { const invite = await api(`/ambulances/${a._id}/driver-invite`, { method: 'POST', body: {} }); setPairing({ vehicleId: invite.vehicleId, token: invite.driverInviteToken }); load(); } catch (e) { setMsg(e.message); } }}>Create driver invitation</button>}<p>Location: {a.location?.coordinates?.[1]?.toFixed(5)}, {a.location?.coordinates?.[0]?.toFixed(5)} · {a.updatedAt ? new Date(a.updatedAt).toLocaleTimeString() : 'Never updated'}</p><label>Status</label><select value={a.status} onChange={async (e) => { try { await api(`/ambulances/${a._id}`, { method: 'PATCH', body: { status: e.target.value } }); load(); } catch (x) { setMsg(x.message); } }}>{['AVAILABLE','DISPATCHED','ON_SITE','MAINTENANCE'].map((s) => <option key={s}>{s}</option>)}</select></article>)}</div>
-    <form className="card" onSubmit={submit}><h3>Register ambulance</h3>{F(form,setForm,'vehicleId','Fleet ID')}{F(form,setForm,'plateNumber','Plate number')}{F(form,setForm,'type','Vehicle type')}{F(form,setForm,'agency','Operating agency')}{F(form,setForm,'phone','Contact phone')}{F(form,setForm,'crew','Crew assignment')}{F(form,setForm,'equipment','Equipment, comma separated')}{user?.role !== 'HOSPITAL_ADMIN' && <><label>Approved hospital</label><select required value={form.hospital || ''} onChange={(e) => setForm({ ...form, hospital: e.target.value })}><option value="">Choose hospital</option>{hospitals.map((h) => <option key={h._id} value={h._id}>{h.name} · {h.city}</option>)}</select></>}<label>Stationed site</label><select value={form.site || ''} onChange={(e) => setForm({ ...form, site: e.target.value })}><option value="">No site</option>{sites.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}</select><button className="b">Register ambulance</button></form>
+  return <><h2>Ambulance fleet and live locations</h2><p>Refreshes automatically. Assigned drivers can sign in separately and stream GPS from their device.</p>{focused && <section className="card"><label htmlFor="fleet-focus">Focus ambulance</label><select id="fleet-focus" value={focused._id} onChange={(e) => setFocus(e.target.value)}>{fleet.map((a) => <option key={a._id} value={a._id}>{a.vehicleId} ({a.status.toLowerCase()})</option>)}</select>{mapUrl ? <iframe title={`Map location of ${focused.vehicleId}`} src={mapUrl} loading="lazy" style={{ width: '100%', height: '360px', border: 0, borderRadius: '12px', marginTop: '1rem' }} /> : <p>Waiting for the first GPS update for this ambulance.</p>}</section>}<div className="grid">{fleet.map((a) => <article className="card" key={a._id}><b>{a.vehicleId}</b> · {a.type} <span className="tag">{a.status}</span><p>Plate: {a.plateNumber} · {a.hospital?.name || a.agency}</p><p>{a.site?.name || 'Outside registered sites'} · Crew: {a.crew || 'Not assigned'}</p><p>Driver: {a.driver?.name || (a.driverInvitePending ? 'Invitation pending' : 'Not paired')}</p>{!a.driver && <button className="b" onClick={async () => { try { const invite = await api(`/ambulances/${a._id}/driver-invite`, { method: 'POST', body: {} }); setPairing({ vehicleId: invite.vehicleId, token: invite.driverInviteToken }); load(); } catch (e) { setMsg(e.message); } }}>Create driver invitation</button>}<p>Location: {a.location?.coordinates?.[1]?.toFixed(5)}, {a.location?.coordinates?.[0]?.toFixed(5)} · {a.updatedAt ? new Date(a.updatedAt).toLocaleTimeString() : 'Never updated'}</p><label>Status</label><select value={a.status} onChange={async (e) => { try { await api(`/ambulances/${a._id}`, { method: 'PATCH', body: { status: e.target.value } }); load(); } catch (x) { setMsg(x.message); } }}>{['AVAILABLE','DISPATCHED','ON_SITE','MAINTENANCE'].map((s) => <option key={s}>{s}</option>)}</select><form onSubmit={(e) => saveShift(e, a)}><fieldset><legend>Driver shift · India time</legend><div className="department-list">{weekDays.map((day, index) => <label key={day}><input type="checkbox" name="shiftDays" value={index} defaultChecked={a.shift?.days?.includes(index)} />{day}</label>)}</div><label>Start time</label><input type="time" name="startTime" required defaultValue={a.shift?.startTime || '08:00'} /><label>End time</label><input type="time" name="endTime" required defaultValue={a.shift?.endTime || '20:00'} /><button className="b">Save driver shift</button></fieldset></form></article>)}</div>
+    <form className="card" onSubmit={submit}><h3>Register ambulance</h3>{F(form,setForm,'vehicleId','Fleet ID')}{F(form,setForm,'plateNumber','Plate number')}{F(form,setForm,'type','Vehicle type')}{F(form,setForm,'agency','Operating agency')}{F(form,setForm,'phone','Contact phone')}{F(form,setForm,'crew','Crew assignment')}{F(form,setForm,'equipment','Equipment, comma separated')}<fieldset><legend>Assigned driver's shift · India time</legend><div className="department-list">{weekDays.map((day, index) => <label key={day}><input type="checkbox" checked={form.shift.days.includes(index)} onChange={(e) => setForm({ ...form, shift: { ...form.shift, days: e.target.checked ? [...form.shift.days, index].sort() : form.shift.days.filter((value) => value !== index) } })} />{day}</label>)}</div><label htmlFor="new-shift-start">Start time</label><input id="new-shift-start" type="time" required value={form.shift.startTime} onChange={(e) => setForm({ ...form, shift: { ...form.shift, startTime: e.target.value } })} /><label htmlFor="new-shift-end">End time</label><input id="new-shift-end" type="time" required value={form.shift.endTime} onChange={(e) => setForm({ ...form, shift: { ...form.shift, endTime: e.target.value } })} /></fieldset>{user?.role !== 'HOSPITAL_ADMIN' && <><label>Approved hospital</label><select required value={form.hospital || ''} onChange={(e) => setForm({ ...form, hospital: e.target.value })}><option value="">Choose hospital</option>{hospitals.map((h) => <option key={h._id} value={h._id}>{h.name} · {h.city}</option>)}</select></>}<label>Stationed site</label><select value={form.site || ''} onChange={(e) => setForm({ ...form, site: e.target.value })}><option value="">No site</option>{sites.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}</select><button className="b">Register ambulance</button></form>
     {pairing && <section className="card"><h3>One-time driver invitation for {pairing.vehicleId}</h3><p>Copy this code and give it directly to the assigned driver. It will only be shown once.</p><input aria-label="Driver invitation code" readOnly value={pairing.token} /></section>}
     <form className="card" onSubmit={addSite}><h3>Register station geofence</h3>{F(siteForm,setSiteForm,'name','Site name')}{F(siteForm,setSiteForm,'address','Address')}{F(siteForm,setSiteForm,'lat','Latitude','number')}{F(siteForm,setSiteForm,'lng','Longitude','number')}{F(siteForm,setSiteForm,'radiusMeters','Boundary radius (meters)','number')}{user?.role !== 'HOSPITAL_ADMIN' && <><label>Approved hospital</label><select required value={siteForm.hospital || ''} onChange={(e) => setSiteForm({ ...siteForm, hospital: e.target.value })}><option value="">Choose hospital</option>{hospitals.map((h) => <option key={h._id} value={h._id}>{h.name} · {h.city}</option>)}</select></>}<button className="b">Register site</button></form><p role="status">{msg}</p></>;
 }
 
 function DriverDash() {
-  const [vehicle, setVehicle] = useState(null), [msg, setMsg] = useState(''), watch = useRef(null);
+  const [vehicle, setVehicle] = useState(null), [msg, setMsg] = useState(''), [contactMsg, setContactMsg] = useState(''), watch = useRef(null);
   const load = () => api('/driver/me').then(setVehicle).catch((e) => setMsg(e.message));
+  const setPhoneSharing = async (share) => {
+    try { const result = await api('/driver/public-contact', { method: 'PATCH', body: { share } }); setVehicle((current) => ({ ...current, driverPhonePublicConsent: result.shared })); setContactMsg(result.message); }
+    catch (error) { setContactMsg(error.message); }
+  };
   useEffect(() => { load(); const timer = setInterval(load, 5000); return () => { clearInterval(timer); if (watch.current !== null) navigator.geolocation?.clearWatch(watch.current); }; }, []);
   const toggle = () => {
     if (!navigator.geolocation) return setMsg('This device does not provide browser GPS.');
@@ -687,7 +771,7 @@ function DriverDash() {
   if (!vehicle) return <><h2>Driver GPS</h2><p role="status">{msg || 'Loading assigned ambulance…'}</p></>;
   const [lng, lat] = vehicle.location?.coordinates || [];
   const map = Number.isFinite(lat) && Number.isFinite(lng) && (lat || lng) ? `https://www.openstreetmap.org/export/embed.html?bbox=${lng - .03}%2C${lat - .02}%2C${lng + .03}%2C${lat + .02}&layer=mapnik&marker=${lat}%2C${lng}` : '';
-  return <><h2>Driver GPS</h2><section className="card"><h3>{vehicle.vehicleId} · {vehicle.type}</h3><span className="tag">{vehicle.status}</span><p>{vehicle.hospital?.name} · Station: {vehicle.site?.name || 'En route'}</p><p>Last location: {lat?.toFixed(5)}, {lng?.toFixed(5)} · {vehicle.updatedAt ? new Date(vehicle.updatedAt).toLocaleString() : 'No location received'}</p><button className="b" onClick={toggle}>{watch.current === null ? 'Start sharing live location' : 'Stop sharing location'}</button>{map && <iframe title="Assigned ambulance map" src={map} loading="lazy" style={{ width: '100%', height: '320px', border: 0, borderRadius: '12px', marginTop: '1rem' }} />}</section><p role="status">{msg}</p></>;
+  return <><h2>Driver GPS</h2><section className="card"><h3>{vehicle.vehicleId} · {vehicle.type}</h3><span className="tag">{vehicle.status}</span><p>{vehicle.hospital?.name} · Station: {vehicle.site?.name || 'En route'}</p><p>Last location: {lat?.toFixed(5)}, {lng?.toFixed(5)} · {vehicle.updatedAt ? new Date(vehicle.updatedAt).toLocaleString() : 'No location received'}</p><button className="b" onClick={toggle}>{watch.current === null ? 'Start sharing live location' : 'Stop sharing location'}</button></section><section className="card"><h3>Emergency contact in public directory</h3><p>Registered phone: {vehicle.driverContactPhone || 'No phone number on this account'}</p><label><input type="checkbox" checked={vehicle.driverPhonePublicConsent} disabled={!vehicle.driverContactPhone} onChange={(event) => setPhoneSharing(event.target.checked)} /> Show my phone number in the public ambulance directory so people can call me in an emergency.</label><p role="status">{contactMsg}</p></section>{map && <section className="card"><iframe title="Assigned ambulance map" src={map} loading="lazy" style={{ width: '100%', height: '320px', border: 0, borderRadius: '12px' }} /></section>}<p role="status">{msg}</p></>;
 }
 
 function AdminTools() {

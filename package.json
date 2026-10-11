@@ -4,12 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch server/src/index.js",
+    "dev": "concurrently --kill-others-on-fail --names api,client \"npm:dev:api\" \"npm:client\"",
+    "dev:api": "node --watch server/src/index.js",
     "start": "node server/src/index.js",
     "client": "vite --host 0.0.0.0",
     "build": "vite build",
     "seed": "node server/src/seed.js",
-    "test": "node --test server/test/"
+    "test": "node --test server/test/api.test.js server/test/unit.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -24,13 +25,14 @@
     "mongoose": "^8.5.0",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
-    "swagger-ui-express": "^5.0.1",
-    "zod": "^3.23.8",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.2"
+    "react-router-dom": "^6.26.2",
+    "swagger-ui-express": "^5.0.1",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
+    "concurrently": "^9.2.5",
     "supertest": "^7.0.0",
     "vite": "^5.4.8"
   }
